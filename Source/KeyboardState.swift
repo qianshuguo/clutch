@@ -82,7 +82,7 @@ enum MappingCodec {
         let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if text == "(null)" || text == "null" { return [] }
         guard let array = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [[String: Any]] else {
-            throw NSError(domain: "HyperKey", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not read existing keyboard mappings. Caps Lock was not modified."])
+            throw NSError(domain: "HyperCaps", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not read existing keyboard mappings. Caps Lock was not modified."])
         }
         return try array.map { entry in
             var result: [String: UInt64] = [:]
@@ -93,7 +93,7 @@ enum MappingCodec {
                     number = string.lowercased().hasPrefix("0x") ? UInt64(string.dropFirst(2), radix: 16) : UInt64(string)
                 } else { number = nil }
                 guard let decoded = number else {
-                    throw NSError(domain: "HyperKey", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid keyboard mapping: \(key)"])
+                    throw NSError(domain: "HyperCaps", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid keyboard mapping: \(key)"])
                 }
                 result[key] = decoded
             }

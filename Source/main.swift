@@ -83,7 +83,7 @@ enum ListGeometry {
 }
 
 enum InterfacePalette {
-    static let surface = NSColor(name: NSColor.Name("HyperKeyListSurface")) { appearance in
+    static let surface = NSColor(name: NSColor.Name("HyperCapsListSurface")) { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             ? NSColor.windowBackgroundColor
             : NSColor(srgbRed: 222 / 255, green: 222 / 255, blue: 222 / 255, alpha: 1)
@@ -547,16 +547,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     func createMenu() {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "⇪+"
-        item.button?.toolTip = "HyperKey — Caps shortcuts"
+        item.button?.toolTip = "HyperCaps — Caps shortcuts"
         let menu = NSMenu()
         let settingsItem = NSMenuItem(title: "Preferences", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self; menu.addItem(settingsItem)
         let foldersItem = NSMenuItem(title: "Folders…", action: #selector(showFolders), keyEquivalent: "")
         foldersItem.target = self; menu.addItem(foldersItem)
-        pauseItem = NSMenuItem(title: "Enable HyperKey", action: #selector(toggle), keyEquivalent: "s")
+        pauseItem = NSMenuItem(title: "Enable HyperCaps", action: #selector(toggle), keyEquivalent: "s")
         pauseItem.target = self; menu.addItem(pauseItem)
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit HyperKey", action: #selector(quitApp), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit HyperCaps", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self; menu.addItem(quit)
         let closeItem = NSMenuItem(title: "Close Window", action: #selector(closeSettings), keyEquivalent: "w")
         closeItem.target = self
@@ -600,7 +600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             content.addSubview(page)
         }
         let general = pages[0]
-        toggleButton = NSButton(checkboxWithTitle: "Enable HyperKey", target: self, action: #selector(toggle))
+        toggleButton = NSButton(checkboxWithTitle: "Enable HyperCaps", target: self, action: #selector(toggle))
         toggleButton.frame = NSRect(x: 120, y: 244, width: 280, height: 24)
         general.addSubview(toggleButton)
         let notice = NSButton(title: "Waiting for Accessibility access", target: self, action: #selector(openPermissions))
@@ -615,7 +615,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         notice.attributedTitle = noticeTitle
         notice.sizeToFit()
         notice.frame = NSRect(x: 140, y: 216, width: notice.frame.width, height: 20)
-        notice.toolTip = "Open Accessibility settings to allow HyperKey."
+        notice.toolTip = "Open Accessibility settings to allow HyperCaps."
         notice.setAccessibilityLabel("Waiting for Accessibility access. Open Accessibility settings.")
         accessibilityNotice = notice
         general.addSubview(notice)
@@ -628,7 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         hideCheckbox = NSButton(checkboxWithTitle: "Hide Status Bar Icon", target: self, action: #selector(changeStatusIcon))
         hideCheckbox!.frame = NSRect(x: 120, y: 115, width: 300, height: 24)
         general.addSubview(hideCheckbox!)
-        let hint = label("Open HyperKey again to show Preferences.", frame: NSRect(x: 140, y: 89, width: 296, height: 20), size: 11)
+        let hint = label("Open HyperCaps again to show Preferences.", frame: NSRect(x: 140, y: 89, width: 296, height: 20), size: 11)
         hint.textColor = .secondaryLabelColor
         general.addSubview(hint)
 
@@ -705,7 +705,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     if SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
                 } else { try SMAppService.mainApp.unregister() }
             } else if sender.state == .on {
-                guard let executable = Bundle.main.executableURL else { throw ToolError(message: "Could not locate HyperKey.") }
+                guard let executable = Bundle.main.executableURL else { throw ToolError(message: "Could not locate HyperCaps.") }
                 let plist: [String: Any] = ["Label": "local.maxvoid.HyperKey.login", "ProgramArguments": [executable.path], "RunAtLoad": true]
                 let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
                 try FileManager.default.createDirectory(at: legacyLoginURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -860,7 +860,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggle) {
-            menuItem.title = tap != nil ? "Disable HyperKey" : (wantsEnabled ? "Cancel Enabling" : "Enable HyperKey")
+            menuItem.title = tap != nil ? "Disable HyperCaps" : (wantsEnabled ? "Cancel Enabling" : "Enable HyperCaps")
         }
         if menuItem.action == #selector(closeSettings) { return window?.isVisible == true || folderWindow?.isVisible == true }
         return true
@@ -1177,18 +1177,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         }
     }
     func setStatus(_ message: String) {
-        item?.button?.toolTip = "HyperKey — " + message
+        item?.button?.toolTip = "HyperCaps — " + message
         // Keep the app menu equivalent in sync with the status menu.
         if let menu = NSApp.mainMenu?.items.first?.submenu,
            let entry = menu.items.first(where: { $0.action == #selector(toggle) }) {
-            entry.title = pauseItem?.title ?? "Enable HyperKey"
+            entry.title = pauseItem?.title ?? "Enable HyperCaps"
         }
         syncPreferences()
-        NSLog("HyperKey: %@", message)
+        NSLog("HyperCaps: %@", message)
     }
     func showError(_ error: Error) {
         setStatus(error.localizedDescription)
-        let alert = NSAlert(); alert.messageText = "HyperKey"; alert.informativeText = error.localizedDescription
+        let alert = NSAlert(); alert.messageText = "HyperCaps"; alert.informativeText = error.localizedDescription
         alert.runModal()
     }
     @objc func toggle() {
@@ -1206,7 +1206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     func start() {
         guard tap == nil, !starting else { return }
         guard AXIsProcessTrusted() else {
-            setStatus("Waiting for Accessibility access. HyperKey will enable automatically.")
+            setStatus("Waiting for Accessibility access. HyperCaps will enable automatically.")
             pauseItem.title = "Cancel Enabling"
             if permissionTimer == nil {
                 permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -1225,7 +1225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 return Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue().handle(type, event)
             }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
             wantsEnabled = false
-            setStatus("Could not monitor the keyboard. Allow Accessibility access and reopen HyperKey.")
+            setStatus("Could not monitor the keyboard. Allow Accessibility access and reopen HyperCaps.")
             pauseItem.title = "Retry Enabling"
             return
         }
@@ -1249,14 +1249,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         do { try mapping.restore() }
         catch { showError(error); return false }
         setStatus("Disabled. The original Caps Lock mapping has been restored.")
-        pauseItem?.title = "Enable HyperKey"
+        pauseItem?.title = "Enable HyperCaps"
         return true
     }
     func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             wantsEnabled = false
             DispatchQueue.main.async { [weak self] in
-                self?.stop(); self?.setStatus("Keyboard monitoring stopped. Caps Lock was restored. Enable HyperKey to retry.")
+                self?.stop(); self?.setStatus("Keyboard monitoring stopped. Caps Lock was restored. Enable HyperCaps to retry.")
             }
             return Unmanaged.passUnretained(event)
         }

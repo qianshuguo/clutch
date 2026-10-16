@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "000000000000000000000005"
-               BuildableName = "HyperKey.app"
-               BlueprintName = "HyperKey"
-               ReferencedContainer = "container:HyperKey.xcodeproj">
+               BuildableName = "HyperCaps.app"
+               BlueprintName = "HyperCaps"
+               ReferencedContainer = "container:HyperCaps.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -44,9 +44,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "000000000000000000000005"
-            BuildableName = "HyperKey.app"
-            BlueprintName = "HyperKey"
-            ReferencedContainer = "container:HyperKey.xcodeproj">
+            BuildableName = "HyperCaps.app"
+            BlueprintName = "HyperCaps"
+            ReferencedContainer = "container:HyperCaps.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <CommandLineArguments>
@@ -67,9 +67,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "000000000000000000000005"
-            BuildableName = "HyperKey.app"
-            BlueprintName = "HyperKey"
-            ReferencedContainer = "container:HyperKey.xcodeproj">
+            BuildableName = "HyperCaps.app"
+            BlueprintName = "HyperCaps"
+            ReferencedContainer = "container:HyperCaps.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
