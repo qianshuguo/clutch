@@ -468,6 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     var loginCheckbox: NSButton?
     var hideCheckbox: NSButton?
     var accessibilityNotice: NSButton?
+    var accessibilityNoticeRow: NSView?
     var pages: [NSView] = []
     var selectedPage = 0
     let pageIDs = ["general", "apps", "folders", "about"]
@@ -600,9 +601,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             content.addSubview(page)
         }
         let general = pages[0]
+        let background = NSBox(frame: general.bounds)
+        background.boxType = .custom
+        background.borderWidth = 0
+        background.fillColor = .windowBackgroundColor
+        background.autoresizingMask = [.width, .height]
+        general.addSubview(background)
+
+        let group = NSBox()
+        group.boxType = .custom
+        group.titlePosition = .noTitle
+        group.borderWidth = 0.5
+        group.borderColor = .separatorColor
+        group.fillColor = .controlBackgroundColor
+        group.cornerRadius = 10
+        group.translatesAutoresizingMaskIntoConstraints = false
+        general.addSubview(group)
+
+        let options = NSStackView()
+        options.orientation = .vertical
+        options.alignment = .leading
+        options.spacing = 14
+        options.detachesHiddenViews = true
+        options.translatesAutoresizingMaskIntoConstraints = false
+        general.addSubview(options)
+        NSLayoutConstraint.activate([
+            group.leadingAnchor.constraint(equalTo: general.leadingAnchor, constant: 24),
+            group.trailingAnchor.constraint(equalTo: general.trailingAnchor, constant: -24),
+            group.topAnchor.constraint(equalTo: general.topAnchor, constant: 24),
+            options.leadingAnchor.constraint(equalTo: group.leadingAnchor, constant: 16),
+            options.trailingAnchor.constraint(equalTo: group.trailingAnchor, constant: -16),
+            options.topAnchor.constraint(equalTo: group.topAnchor, constant: 16),
+            group.bottomAnchor.constraint(equalTo: options.bottomAnchor, constant: 16)
+        ])
+        func addOption(_ button: NSButton, detail: NSView? = nil) {
+            let row = NSStackView()
+            row.orientation = .vertical
+            row.alignment = .leading
+            row.spacing = 4
+            row.detachesHiddenViews = true
+            row.addArrangedSubview(button)
+            if let detail = detail {
+                let inset = NSStackView(views: [detail])
+                inset.orientation = .vertical
+                inset.alignment = .leading
+                inset.edgeInsets = NSEdgeInsets(top: 0, left: 20, bottom: 0, right: 0)
+                // Hide the wrapper too, so a hidden notice leaves no empty row.
+                if detail === accessibilityNotice { accessibilityNoticeRow = inset }
+                row.addArrangedSubview(inset)
+            }
+            options.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: options.widthAnchor).isActive = true
+        }
+        func addRule() {
+            let rule = NSBox()
+            rule.boxType = .separator
+            options.addArrangedSubview(rule)
+            rule.widthAnchor.constraint(equalTo: options.widthAnchor).isActive = true
+        }
         toggleButton = NSButton(checkboxWithTitle: "Enable HyperCaps", target: self, action: #selector(toggle))
-        toggleButton.frame = NSRect(x: 120, y: 244, width: 280, height: 24)
-        general.addSubview(toggleButton)
         let notice = NSButton(title: "Waiting for Accessibility access", target: self, action: #selector(openPermissions))
         notice.isBordered = false
         notice.alignment = .left
@@ -613,24 +670,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         noticeTitle.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue,
                                  range: (notice.title as NSString).range(of: "Accessibility access"))
         notice.attributedTitle = noticeTitle
-        notice.sizeToFit()
-        notice.frame = NSRect(x: 140, y: 216, width: notice.frame.width, height: 20)
         notice.toolTip = "Open Accessibility settings to allow HyperCaps."
         notice.setAccessibilityLabel("Waiting for Accessibility access. Open Accessibility settings.")
         accessibilityNotice = notice
-        general.addSubview(notice)
-        let divider = NSBox(frame: NSRect(x: 24, y: 194, width: 412, height: 1))
-        divider.boxType = .separator
-        general.addSubview(divider)
+        addOption(toggleButton, detail: notice)
+        addRule()
         loginCheckbox = NSButton(checkboxWithTitle: "Launch on Login", target: self, action: #selector(changeLoginLaunch))
-        loginCheckbox!.frame = NSRect(x: 120, y: 153, width: 300, height: 24)
-        general.addSubview(loginCheckbox!)
+        addOption(loginCheckbox!)
+        addRule()
         hideCheckbox = NSButton(checkboxWithTitle: "Hide Status Bar Icon", target: self, action: #selector(changeStatusIcon))
-        hideCheckbox!.frame = NSRect(x: 120, y: 115, width: 300, height: 24)
-        general.addSubview(hideCheckbox!)
-        let hint = label("Open HyperCaps again to show Preferences.", frame: NSRect(x: 140, y: 89, width: 296, height: 20), size: 11)
+        let hint = label("Open HyperCaps again to show Preferences.", frame: .zero, size: 11)
         hint.textColor = .secondaryLabelColor
-        general.addSubview(hint)
+        addOption(hideCheckbox!, detail: hint)
 
         let apps = pages[1]
         // Preserve the fixed shortcut column's original two-point native overflow.
@@ -695,7 +746,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         toggleButton?.state = wantsEnabled ? .on : .off
         loginCheckbox?.state = loginLaunchEnabled ? .on : .off
         hideCheckbox?.state = UserDefaults.standard.bool(forKey: "HideStatusBarIcon") ? .on : .off
-        accessibilityNotice?.isHidden = !(wantsEnabled && tap == nil && !AXIsProcessTrusted())
+        let hideNotice = !(wantsEnabled && tap == nil && !AXIsProcessTrusted())
+        accessibilityNotice?.isHidden = hideNotice
+        accessibilityNoticeRow?.isHidden = hideNotice
     }
     @objc func changeLoginLaunch(_ sender: NSButton) {
         do {
@@ -893,7 +946,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             NSApp.setActivationPolicy(.accessory)
             self.window = nil; self.table = nil; self.preferencesFolderTable = nil
             self.toggleButton = nil; self.loginCheckbox = nil; self.hideCheckbox = nil
-            self.accessibilityNotice = nil; self.pages = []
+            self.accessibilityNotice = nil; self.accessibilityNoticeRow = nil; self.pages = []
         }
     }
     func configureList(_ list: NSTableView, width: CGFloat, columnID: String, showsHeaders: Bool) {
