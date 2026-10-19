@@ -1,7 +1,55 @@
-.DS_Store
+# ===== HyperCaps =====
+# build.command / test.command 产物：各架构二进制、测试可执行文件、module cache、日志
 build/
-HyperKey.app/
+# 本地构建出的 .app（由 build.command 生成）
 HyperCaps.app/
+HyperKey.app/
+*.log
+
+# ===== macOS =====
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.DocumentRevisions-V100
+.TemporaryItems
+Icon?
+
+# ===== Xcode =====
 DerivedData/
 xcuserdata/
 *.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
+timeline.xctimeline
+playground.xcworkspace
+# 保留共享配置：project.pbxproj、xcshareddata/（schemes、IDEWorkspaceChecks.plist）
+
+# ===== Swift Package Manager =====
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# ===== 签名 / 证书（切勿提交）=====
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+
+# ===== 编辑器 / 工具 =====
+.vscode/
+.idea/
+*.swp
+*~
+.env
+.env.*

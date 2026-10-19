@@ -1,7 +1,7 @@
 #if DEBUG && canImport(SwiftUI)
 import SwiftUI
 
-// Edit makePreferencesContent() in main.swift to change both Canvas and the app.
+// Edit makePreferencesContent() in AppDelegate+Preferences.swift to change both Canvas and the app.
 // The coordinator keeps AppKit's weak table delegate/data source alive.
 private struct PreferencesCanvas: NSViewRepresentable {
     let page: Int
@@ -10,7 +10,7 @@ private struct PreferencesCanvas: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let controller = context.coordinator
-        controller.loadBindings()
+        try? controller.loadBindings()
         controller.selectedPage = page
         return controller.makePreferencesContent()
     }
@@ -46,7 +46,7 @@ private struct PreferencesWindowPreview: View {
                     let tab = AppDelegate.preferenceTabs[index]
                     VStack(spacing: 5) {
                         Image(systemName: tab.symbol)
-                            .font(.system(size: 25, weight: .regular))
+                            .font(.system(size: 18, weight: .regular))
                             .frame(height: 29)
                         Text(tab.title).font(.system(size: 13))
                     }
@@ -59,7 +59,8 @@ private struct PreferencesWindowPreview: View {
             .frame(maxWidth: .infinity)
             .padding(.bottom, 8)
             PreferencesCanvas(page: page)
-                .frame(width: AppDelegate.preferenceSize.width, height: AppDelegate.preferenceSize.height)
+                .frame(width: AppDelegate.preferenceSize.width,
+                       height: AppDelegate.preferenceSize.height)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -72,7 +73,7 @@ struct PreferencesPreviews: PreviewProvider {
             PreferencesWindowPreview(page: 0).previewDisplayName("General")
             PreferencesWindowPreview(page: 1).previewDisplayName("App List")
             PreferencesWindowPreview(page: 2).previewDisplayName("Folders")
-            PreferencesWindowPreview(page: 3).previewDisplayName("About")
+            PreferencesWindowPreview(page: 3).previewDisplayName("Windows")
         }
         .frame(width: AppDelegate.preferenceSize.width, height: AppDelegate.preferenceSize.height + 106)
         .background(Color(nsColor: .windowBackgroundColor))
