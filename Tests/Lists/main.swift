@@ -140,18 +140,18 @@ recorder.capsReleased()
 expect(owner.bindings[0].key == 17 && owner.bindings[0].secondKey == 17, "releasing Caps saves Caps + T + T")
 let legacy = try! JSONDecoder().decode([AppShortcut].self, from: Data(#"[{"key":3,"name":"Old","path":"/tmp/old"}]"#.utf8))
 expect(legacy[0].key == 3 && legacy[0].secondKey == nil, "lists saved before two-key shortcuts still load")
-// A key opens one app by itself or starts two-key shortcuts, never both.
+// Caps release decides, so Caps + M and Caps + M + W can belong to different apps.
 owner.bindings = [AppShortcut(key: 46, name: "Mail", path: "/mail", bundleID: nil),
                   AppShortcut(key: 46, name: "Word", path: "/word", bundleID: nil, secondKey: 13),
                   AppShortcut(key: 46, name: "Messages", path: "/messages", bundleID: nil, secondKey: 46)]
 let comboConflicts = owner.shortcutConflicts(46, 13, excluding: "/notes")
-expect(comboConflicts.indices == [1, 0] && comboConflicts.inUse == ["Caps + M + W already opens Word.", "Caps + M already opens Mail."],
-       "a two-key shortcut takes the same shortcut and the key used alone")
-let aloneConflicts = owner.shortcutConflicts(46, nil, excluding: "/notes")
-expect(aloneConflicts.indices == [0, 1, 2] && aloneConflicts.inUse.last == "Caps + M already starts Word (M + W) and Messages (M + M).",
-       "a key used alone takes every two-key shortcut starting with it")
-expect(owner.shortcutConflicts(46, 7, excluding: "/notes").indices == [0], "two-key shortcuts with the same first key can coexist")
-expect(owner.shortcutConflicts(46, 13, excluding: "/word").indices == [0], "an app never conflicts with itself")
+expect(comboConflicts.indices == [1] && comboConflicts.inUse == ["Caps + M + W already opens Word."], "only the same shortcut conflicts")
+expect(owner.shortcutConflicts(46, nil, excluding: "/notes").indices == [0], "Caps + M alone conflicts only with Caps + M")
+expect(owner.shortcutConflicts(46, 7, excluding: "/notes").indices.isEmpty, "a new two-key shortcut can share its first key")
+expect(owner.shortcutConflicts(46, 13, excluding: "/word").indices.isEmpty, "an app never conflicts with itself")
+let windowConflicts = owner.firstKeyConflicts(46)
+expect(windowConflicts.indices == [0, 1, 2] && windowConflicts.inUse == ["Caps + M already opens Mail.", "Caps + M already starts Word (M + W) and Messages (M + M)."],
+       "a window action takes the key alone and every two-key shortcut starting with it")
 owner.bindings = []
 expect(recorder.onKeys?(0, nil) == false, "a removed binding cannot be assigned from a stale cell")
 

@@ -162,16 +162,15 @@ extension AppDelegate {
         }
         let otherModifier = !event.flags.intersection([.maskControl, .maskAlternate]).isEmpty
         let commandModifier = event.flags.contains(.maskCommand)
-        // Only a fresh key-down while Caps is held can launch an application.
-        // Reuse this binding after routing instead of searching the list twice.
+        // What a fresh key-down while Caps is held could mean. The shortcut itself is
+        // looked up when Caps is released.
         let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-        let windowCommand = windowShortcuts.command(for: key)
         let eligible = shortcutsEnabled && type == .keyDown && state.held && key != KeyCode.hyper && key != KeyCode.space && panel == nil && !repeated
-        let binding = eligible && windowCommand == nil ? bindings.first(where: { $0.matches(key, nil) }) : nil
-        let prefix = eligible && windowCommand == nil && bindings.contains(where: { $0.hasShortcut && $0.key == key && $0.secondKey != nil })
-        // Second key after a waiting prefix (Caps + M + W).
-        let pendingPrefix = state.pendingPrefix
-        let combo = eligible ? pendingPrefix.flatMap { first in bindings.first(where: { $0.matches(first, key) }) } : nil
+        let windowKey = eligible && windowShortcuts.command(for: key) != nil
+        let bound = eligible && !windowKey && bindings.contains(where: { $0.matches(key, nil) })
+        let prefix = eligible && !windowKey && bindings.contains(where: { $0.hasShortcut && $0.key == key && $0.secondKey != nil })
+        // Second key after the first (Caps + M + W).
+        let comboBound = eligible && state.pendingKey.map { first in bindings.contains(where: { $0.matches(first, key) }) } == true
         let capsWasHeld = state.held
         let result: KeyboardState.Result
         if type == .flagsChanged {
@@ -182,12 +181,13 @@ extension AppDelegate {
                                            pressed: pressed)
         } else {
             result = state.route(key: key, down: type == .keyDown,
-                                 repeated: repeated, bound: binding != nil, prefix: prefix, comboBound: combo != nil,
-                                 windowKey: windowCommand != nil,
+                                 repeated: repeated, bound: bound, prefix: prefix, comboBound: comboBound,
+                                 windowKey: windowKey,
                                  otherModifier: otherModifier, commandModifier: commandModifier,
                                  folderSelectionActive: panel != nil, folderCount: folders.count,
                                  shortcutsEnabled: shortcutsEnabled)
         }
+        updateLaunchHint(shortcutsEnabled: shortcutsEnabled)
         if let swallowed = routeCapsRecording(type, key: key, capsWasHeld: capsWasHeld, repeated: repeated, flags: event.flags) {
             if swallowed { return nil }
         }
@@ -203,12 +203,19 @@ extension AppDelegate {
                 catch { self.failKeyboard(error: error) }
             }
         }
-        if result.launch != nil,
-           let target = result.launchCombo ? combo : binding {
+        if let first = result.launch,
+           let target = bindings.first(where: { $0.matches(first, result.launchSecond) }) {
             afterKeyEvent { [weak self] in self?.activate(target) }
         }
-        if result.window != nil, let command = windowCommand {
-            afterKeyEvent { [weak self] in self?.performWindowCommand(command) }
+        if let previewKey = result.windowPreview, let command = windowShortcuts.command(for: previewKey) {
+            afterKeyEvent { [weak self] in self?.previewWindowCommand(command) }
+        }
+        if result.window != nil {
+            afterKeyEvent { [weak self] in self?.commitWindowPreview() }
+        } else if let session = windowPreview, !session.commitRequested, !state.windowPreviewActive {
+            // Escape, another key, a modifier, a focus change, or Caps released without
+            // a window shortcut: drop the preview.
+            afterKeyEvent { [weak self] in self?.cancelWindowPreview() }
         }
         if let panel = panel, result.folderNumber != nil || result.openFolderSelection {
             afterKeyEvent { [weak self, weak panel] in

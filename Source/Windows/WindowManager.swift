@@ -13,11 +13,53 @@ final class WindowManager {
 
     private struct Screen { let frame: CGRect; let visible: CGRect }
 
-    func perform(_ command: WindowCommand, in app: NSRunningApplication) {
+    // Everything needed to apply a plan to one window when Caps is released.
+    struct Target {
+        let window: AXUIElement
+        let application: AXUIElement
+        let screens: [CGRect]
+        let plan: WindowPlan
+    }
+
+    // Reads the focused window once, off the main thread. `completion` runs on the
+    // main thread with nil when there is no window to arrange.
+    func beginPlan(in app: NSRunningApplication, completion: @escaping (Target?) -> Void) {
         let screens = Self.screens()
-        guard !screens.isEmpty else { return }
+        guard !screens.isEmpty else { completion(nil); return }
         let processID = app.processIdentifier
-        queue.async { [self] in perform(command, processID: processID, screens: screens) }
+        queue.async { [self] in
+            let target = makeTarget(processID: processID, screens: screens)
+            DispatchQueue.main.async { completion(target) }
+        }
+    }
+
+    // Moves the window to the plan's frame in one go and keeps the plan's memory,
+    // so repeats and Restore continue from where the window actually landed.
+    func commit(_ plan: WindowPlan, to target: Target) {
+        guard plan.applied else { return }
+        queue.async { [self] in
+            let current = Self.frame(of: target.window) ?? plan.start
+            let result = WindowLayout.same(plan.frame, current) ? current
+                : Self.setFrame(plan.frame, from: current, of: target.window, in: target.application, screens: target.screens)
+            if let index = memories.firstIndex(where: { CFEqual($0.window, target.window) }) { memories.remove(at: index) }
+            if var memory = plan.memory {
+                memory.lastFrame = result
+                memories.append((target.window, memory))
+                if memories.count > Self.memoryLimit { memories.removeFirst(memories.count - Self.memoryLimit) }
+            }
+        }
+    }
+
+    private func makeTarget(processID: pid_t, screens: [Screen]) -> Target? {
+        let application = AXUIElementCreateApplication(processID)
+        AXUIElementSetMessagingTimeout(application, 0.25)
+        guard let window = Self.focusedWindow(of: application),
+              (Self.value(window, "AXFullScreen") as? Bool) != true,
+              let current = Self.frame(of: window) else { return nil }
+        let memory = memories.first { CFEqual($0.window, window) }?.memory
+        let screen = screens[WindowLayout.screenIndex(for: current, screens: screens.map { $0.frame })]
+        return Target(window: window, application: application, screens: screens.map { $0.visible },
+                      plan: WindowPlan(start: current, screen: screen.visible, memory: memory))
     }
 
     // NSScreen uses bottom-left coordinates; Accessibility uses top-left of the primary display.
@@ -28,30 +70,6 @@ final class WindowManager {
             CGRect(x: rect.minX, y: top - rect.maxY, width: rect.width, height: rect.height)
         }
         return NSScreen.screens.map { Screen(frame: flip($0.frame), visible: flip($0.visibleFrame)) }
-    }
-
-    private func perform(_ command: WindowCommand, processID: pid_t, screens: [Screen]) {
-        let application = AXUIElementCreateApplication(processID)
-        AXUIElementSetMessagingTimeout(application, 0.25)
-        guard let window = Self.focusedWindow(of: application),
-              (Self.value(window, "AXFullScreen") as? Bool) != true,
-              let current = Self.frame(of: window) else { return }
-        let index = memories.firstIndex { CFEqual($0.window, window) }
-        let memory = index.map { memories[$0].memory }
-        let screen = screens[WindowLayout.screenIndex(for: current, screens: screens.map { $0.frame })]
-        guard let action = WindowLayout.action(for: command, current: current, screen: screen.visible,
-                                               memory: memory) else { return }
-        guard let target = WindowLayout.frame(for: action, window: current, screen: screen.visible,
-                                              restore: memory?.restoreFrame) else { return }
-        // A target equal to the current frame still records the action, so a repeat
-        // continues the sequence even when the first press changed nothing.
-        let result = WindowLayout.same(target, current) ? current
-            : Self.setFrame(target, from: current, of: window, in: application, screens: screens.map { $0.visible })
-        if let index = index { memories.remove(at: index) }
-        if let updated = WindowLayout.remember(action, before: current, after: result, memory: memory) {
-            memories.append((window, updated))
-            if memories.count > Self.memoryLimit { memories.removeFirst(memories.count - Self.memoryLimit) }
-        }
     }
 
     private static func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
@@ -116,10 +134,122 @@ final class WindowManager {
     }
 }
 
+// The preview of a window action (Rectangle's "footprint"): a translucent rounded
+// rectangle with a border, in the accent color, where the window will land. It never
+// takes focus or mouse events, and fades in and out; changing steps moves it at once.
+final class WindowPreviewOverlay {
+    private var panel: NSPanel?
+    static let alpha: CGFloat = 0.3
+    static let borderWidth: CGFloat = 2
+    static let cornerRadius: CGFloat = 10
+    static let fade: TimeInterval = 0.15
+
+    // `frame` uses Accessibility coordinates (top-left of the primary display).
+    func show(_ frame: CGRect) {
+        guard let primary = NSScreen.screens.first else { return }
+        let rect = NSRect(x: frame.minX, y: primary.frame.maxY - frame.maxY, width: frame.width, height: frame.height)
+        let panel = self.panel ?? makePanel()
+        self.panel = panel
+        panel.setFrame(rect, display: true)
+        if !panel.isVisible { panel.alphaValue = 0; panel.orderFrontRegardless() }
+        // Already shown or fading in; a preview fading out fades back in.
+        guard panel.alphaValue < 1 else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.fade
+            panel.animator().alphaValue = 1
+        }
+    }
+    func hide() {
+        guard let panel = panel, panel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Self.fade
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak panel] in
+            // A preview shown again during the fade stays visible.
+            if let panel = panel, panel.alphaValue == 0 { panel.orderOut(nil) }
+        })
+    }
+    private func makePanel() -> NSPanel {
+        let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.level = .floating
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
+        let view = PreviewView()
+        view.autoresizingMask = [.width, .height]
+        panel.contentView = view
+        return panel
+    }
+    private final class PreviewView: NSView {
+        override var wantsUpdateLayer: Bool { true }
+        override init(frame: NSRect) { super.init(frame: frame); wantsLayer = true }
+        required init?(coder: NSCoder) { super.init(coder: coder); wantsLayer = true }
+        // Resolved here so the accent color follows light/dark mode and user changes.
+        override func updateLayer() {
+            guard let layer = layer else { return }
+            let color = NSColor.controlAccentColor
+            layer.cornerRadius = WindowPreviewOverlay.cornerRadius
+            layer.borderWidth = WindowPreviewOverlay.borderWidth
+            layer.borderColor = color.cgColor
+            layer.backgroundColor = color.withAlphaComponent(WindowPreviewOverlay.alpha).cgColor
+        }
+    }
+}
+
+// One Caps hold of window actions: the target is read once, then each key press
+// updates the plan and the preview; releasing Caps applies it.
+final class WindowPreviewSession {
+    var target: WindowManager.Target?
+    var plan: WindowPlan?
+    // Pressed before the window was read.
+    var pending: [WindowCommand] = []
+    var commitRequested = false
+}
+
 extension AppDelegate {
-    func performWindowCommand(_ command: WindowCommand) {
+    func previewWindowCommand(_ command: WindowCommand) {
+        if let session = windowPreview {
+            guard var plan = session.plan else { session.pending.append(command); return }
+            plan.apply(command)
+            session.plan = plan
+            showWindowPlan(plan)
+            return
+        }
         guard let app = NSWorkspace.shared.frontmostApplication, !app.isTerminated,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
-        windowManager.perform(command, in: app)
+        let session = WindowPreviewSession()
+        session.pending = [command]
+        windowPreview = session
+        windowManager.beginPlan(in: app) { [weak self, weak session] target in
+            guard let self = self, let session = session, self.windowPreview === session else { return }
+            guard let target = target else { self.cancelWindowPreview(); return }
+            var plan = target.plan
+            for pending in session.pending { plan.apply(pending) }
+            session.pending = []
+            session.target = target
+            session.plan = plan
+            if session.commitRequested { self.commitWindowPreview() } else { self.showWindowPlan(plan) }
+        }
+    }
+    private func showWindowPlan(_ plan: WindowPlan) {
+        // Restore without a restore point changes nothing, so nothing is shown.
+        if plan.applied { windowPreviewOverlay.show(plan.frame) } else { windowPreviewOverlay.hide() }
+    }
+    // Caps released: apply the previewed frame. If the window is still being read,
+    // it is applied as soon as the read finishes.
+    func commitWindowPreview() {
+        guard let session = windowPreview else { return }
+        guard let plan = session.plan, let target = session.target else { session.commitRequested = true; return }
+        windowPreview = nil
+        windowPreviewOverlay.hide()
+        windowManager.commit(plan, to: target)
+    }
+    func cancelWindowPreview() {
+        windowPreview = nil
+        windowPreviewOverlay.hide()
     }
 }

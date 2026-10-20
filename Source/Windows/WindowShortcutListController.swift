@@ -61,8 +61,7 @@ extension AppDelegate {
     func assignWindowShortcut(_ code: UInt16, to command: WindowCommand, recorder: KeyRecorder) -> Bool {
         guard shortcutKeyAvailable(code) else { return false }
         let otherCommand = windowShortcuts.command(for: code).flatMap { $0 == command ? nil : $0 }
-        // As if setting the key alone: catches apps using it alone and two-key shortcuts starting with it.
-        let apps = shortcutConflicts(code, nil, excluding: nil)
+        let apps = firstKeyConflicts(code)
         let appNames = apps.indices.map { bindings[$0].name }
         let replacedNames: [String] = appNames + (otherCommand.map { [$0.title] } ?? [])
         if !replacedNames.isEmpty {
@@ -104,8 +103,9 @@ extension AppDelegate {
         content.addSubview(button)
         addListHelp([
             ("Set a shortcut", "Hold Caps + a key"),
+            ("Holding Caps", "Preview; release Caps to apply"),
             ("Left / Right Half again", "Cycle ½ → ⅔ → ⅓"),
-            ("Fill Height again", "Fill the screen"),
+            ("Fill Height again", "Full height ⇄ full screen"),
             ("Restore", "Size before HyperCaps moved it"),
             ("Hover an action", "Full description")
         ], to: content, trailing: button.frame.minX - 8)

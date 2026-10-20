@@ -23,7 +23,7 @@ enum WindowCommand: String, CaseIterable {
         switch self {
         case .left: return "Snap to the left half. Press again for 2/3, then 1/3."
         case .right: return "Snap to the right half. Press again for 2/3, then 1/3."
-        case .up: return "Fill the screen height, keeping position and width. Press again on a full-height window to maximize it."
+        case .up: return "Fill the screen height, keeping position and width. Press again to switch between full height and maximized."
         case .down: return "Return to the size and place before the first layout."
         case .smaller: return "Shrink by 30 points in each direction."
         case .larger: return "Grow by 30 points in each direction."
@@ -125,6 +125,43 @@ struct WindowMemory: Equatable {
     var restoreFrame: CGRect
     var lastAction: WindowAction
     var lastFrame: CGRect
+    // The frame before the last maximize, so ↑ again can go back to it.
+    var unmaximizedFrame: CGRect? = nil
+}
+
+// The window actions pressed during one Caps hold, simulated on the window's frame
+// so the preview shows exactly where the window will land. Releasing Caps applies
+// `frame` once and keeps `memory`, as if each action had been performed in turn.
+struct WindowPlan: Equatable {
+    let start: CGRect
+    let screen: CGRect
+    private let startMemory: WindowMemory?
+    private(set) var frame: CGRect
+    private(set) var memory: WindowMemory?
+    // False until an action applies; Restore without a restore point applies nothing.
+    private(set) var applied = false
+    private var lastCommand: WindowCommand?
+
+    init(start: CGRect, screen: CGRect, memory: WindowMemory?) {
+        self.start = start; self.screen = screen; startMemory = memory; frame = start; self.memory = memory
+    }
+    // Pressing the same key again continues (← ½ → ⅔ → ⅓, ↑ height ⇄ full, = = −).
+    // Switching to another key starts over from the window as it is, so ← then ↑
+    // previews exactly what ↑ alone would.
+    mutating func apply(_ command: WindowCommand) {
+        if let previous = lastCommand, Self.family(previous) != Self.family(command) {
+            frame = start; memory = startMemory; applied = false
+        }
+        lastCommand = command
+        guard let action = WindowLayout.action(for: command, current: frame, screen: screen, memory: memory),
+              let target = WindowLayout.frame(for: action, window: frame, screen: screen, restore: memory?.restoreFrame,
+                                              unmaximized: memory?.unmaximizedFrame) else { return }
+        memory = WindowLayout.remember(action, before: frame, after: target, memory: memory)
+        frame = target
+        applied = true
+    }
+    // − and = step the same size, so they continue each other.
+    private static func family(_ command: WindowCommand) -> WindowCommand { command == .larger ? .smaller : command }
 }
 
 enum WindowLayout {
@@ -152,10 +189,11 @@ enum WindowLayout {
             if case .rightHalf(let step)? = last { return .rightHalf(step: (step + 1) % steps) }
             return .rightHalf(step: 0)
         case .up:
-            // ↑ fills the height; ↑ on a window that already spans top to bottom maximizes.
+            // ↑ toggles fill height ⇄ maximize. ↑ on a window that already spans top to
+            // bottom maximizes; ↑ on a window HyperCaps maximized goes back to full height.
             // The history check covers apps that stop just short (terminal row grids).
-            return fillsHeight(current, of: screen) || last == .maximizeHeight || last == .maximize
-                ? .maximize : .maximizeHeight
+            if last == .maximize { return .maximizeHeight }
+            return fillsHeight(current, of: screen) || last == .maximizeHeight ? .maximize : .maximizeHeight
         case .down:
             return memory == nil ? nil : .restore
         case .smaller:
@@ -172,7 +210,9 @@ enum WindowLayout {
     }
 
     // The target frame, or nil when the action has nothing to change.
-    static func frame(for action: WindowAction, window: CGRect, screen: CGRect, restore: CGRect?) -> CGRect? {
+    // `unmaximized`: the frame before the last maximize, used when ↑ leaves maximize.
+    static func frame(for action: WindowAction, window: CGRect, screen: CGRect, restore: CGRect?,
+                      unmaximized: CGRect? = nil) -> CGRect? {
         switch action {
         case .leftHalf(let step):
             let width = (screen.width * halfFractions[step % halfFractions.count]).rounded()
@@ -181,8 +221,10 @@ enum WindowLayout {
             let width = (screen.width * halfFractions[step % halfFractions.count]).rounded()
             return CGRect(x: screen.maxX - width, y: screen.minY, width: width, height: screen.height)
         case .maximizeHeight:
-            let width = min(window.width, screen.width)
-            let x = min(max(window.minX, screen.minX), screen.maxX - width)
+            // Leaving maximize, keep the width and place the window had before it.
+            let base = same(window, screen) ? (unmaximized ?? restore ?? window) : window
+            let width = min(base.width, screen.width)
+            let x = min(max(base.minX, screen.minX), screen.maxX - width)
             return CGRect(x: x, y: screen.minY, width: width, height: screen.height)
         case .maximize:
             return screen
@@ -242,7 +284,8 @@ enum WindowLayout {
         let restoreFrame: CGRect
         if let memory = memory, same(memory.lastFrame, before) { restoreFrame = memory.restoreFrame }
         else { restoreFrame = before }
-        return WindowMemory(restoreFrame: restoreFrame, lastAction: action, lastFrame: after)
+        return WindowMemory(restoreFrame: restoreFrame, lastAction: action, lastFrame: after,
+                            unmaximizedFrame: action == .maximize ? before : nil)
     }
 
     // Each Accessibility write makes the app lay out and redraw, and every

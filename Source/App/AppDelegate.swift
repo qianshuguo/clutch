@@ -39,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var bindings: [AppShortcut] = []
     let applicationWindowCycle = ApplicationWindowCycle()
     let windowManager = WindowManager()
+    let windowPreviewOverlay = WindowPreviewOverlay()
+    let launchHint = LaunchHintOverlay()
+    var windowPreview: WindowPreviewSession?
     var windowShortcuts = WindowShortcuts.load()
     var windowShortcutList: WindowShortcutListController?
     var showingLaunchConfirmation = false

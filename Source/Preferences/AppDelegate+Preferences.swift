@@ -124,9 +124,8 @@ extension AppDelegate: NSToolbarDelegate {
                         add: { [weak self] in self?.addBinding() },
                         remove: { [weak self] in self?.removeBinding() }, itemName: "Application")
         addListHelp([
-            ("Caps + key", "Switch to the app"),
+            ("Caps + key, release Caps", "Switch to the app"),
             ("Set a shortcut", "Hold Caps + 1 or 2 keys"),
-            ("One key", "Opens an app, or starts two-key shortcuts, not both"),
             ("Press again", "Next window of that app"),
             ("Not running", "Asks first; Return opens it")
         ], to: apps, trailing: Self.preferenceSize.width - 12)

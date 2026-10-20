@@ -81,19 +81,136 @@ final class ApplicationWindowCycle {
     }
 }
 
+// While Caps is held, the app that releasing Caps would open: its icon and name in a
+// small HUD at the center of the screen. Like Command-Tab it appears only after a short
+// delay, so a quick Caps + key never flashes it; once on screen it follows each key at
+// once. It never takes focus or mouse events, and releasing Caps hides it before the
+// app is opened as usual.
+final class LaunchHintOverlay {
+    // The app path last requested by the key handler, set synchronously in the tap
+    // callback so each key press compares against it without waiting for the UI.
+    var target: String?
+    private var panel: NSPanel?
+    private var shownPath: String?
+    private let iconView = NSImageView()
+    private let nameLabel = NSTextField(labelWithString: "")
+    static let size = NSSize(width: 148, height: 148)
+    static let iconSize: CGFloat = 88
+    static let cornerRadius: CGFloat = 20
+    static let fade: TimeInterval = 0.12
+    static let delay: TimeInterval = 0.2
+    // Waiting out `delay`; the latest app wins when it fires.
+    private var delayTimer: Timer?
+    private var pending: AppShortcut?
+    private var onScreen = false
+
+    func show(_ binding: AppShortcut) {
+        guard !onScreen else { present(binding); return }
+        pending = binding
+        guard delayTimer == nil else { return }
+        // A run-loop timer in common modes keeps firing during menu tracking and drags.
+        let timer = Timer(timeInterval: Self.delay, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            self.delayTimer = nil
+            if let binding = self.pending { self.pending = nil; self.present(binding) }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        delayTimer = timer
+    }
+    private func present(_ binding: AppShortcut) {
+        onScreen = true
+        let panel = self.panel ?? makePanel()
+        self.panel = panel
+        if shownPath != binding.path {
+            shownPath = binding.path
+            iconView.image = NSWorkspace.shared.icon(forFile: binding.path)
+            nameLabel.stringValue = binding.name
+        }
+        // The screen with the key window, where the user is working.
+        if let screen = NSScreen.main ?? NSScreen.screens.first {
+            let visible = screen.visibleFrame
+            panel.setFrameOrigin(NSPoint(x: visible.midX - Self.size.width / 2,
+                                         y: visible.midY - Self.size.height / 2))
+        }
+        if !panel.isVisible { panel.alphaValue = 0; panel.orderFrontRegardless() }
+        guard panel.alphaValue < 1 else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.fade
+            panel.animator().alphaValue = 1
+        }
+    }
+    func hide() {
+        delayTimer?.invalidate(); delayTimer = nil; pending = nil
+        onScreen = false
+        guard let panel = panel, panel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Self.fade
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak panel] in
+            // A hint shown again during the fade stays visible.
+            if let panel = panel, panel.alphaValue == 0 { panel.orderOut(nil) }
+        })
+    }
+    private func makePanel() -> NSPanel {
+        let size = Self.size
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.level = .floating
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
+        let background = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
+        background.material = .hudWindow
+        background.blendingMode = .behindWindow
+        background.state = .active
+        let radius = Self.cornerRadius
+        background.maskImage = NSImage(size: size, flipped: false) { rect in
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.frame = NSRect(x: (size.width - Self.iconSize) / 2, y: 42,
+                                width: Self.iconSize, height: Self.iconSize)
+        nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nameLabel.alignment = .center
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.frame = NSRect(x: 12, y: 14, width: size.width - 24, height: 18)
+        background.addSubview(iconView)
+        background.addSubview(nameLabel)
+        panel.contentView = background
+        return panel
+    }
+}
+
 extension AppDelegate {
-    // `second` makes a two-key shortcut (Caps + code + second). One rule keeps every
-    // shortcut immediate: a key either opens an app by itself or starts two-key
-    // shortcuts, never both. Taking a key asks first and names who loses a shortcut.
+    // Called for every key event the tap handles: shows the app that releasing Caps
+    // would open, or hides the hint when there is none (including on Caps release).
+    func updateLaunchHint(shortcutsEnabled: Bool) {
+        let hint = shortcutsEnabled ? state.launchCandidate.flatMap { candidate in
+            bindings.first { $0.matches(candidate.first, candidate.second) }
+        } : nil
+        guard hint?.path != launchHint.target else { return }
+        launchHint.target = hint?.path
+        afterKeyEvent { [weak self] in
+            if let hint = hint { self?.launchHint.show(hint) } else { self?.launchHint.hide() }
+        }
+    }
+
+    // `second` makes a two-key shortcut (Caps + code + second). Shortcuts run when Caps
+    // is released, so Caps + M and Caps + M + W can belong to different apps.
+    // Taking a shortcut asks first and names who loses it.
     func assignShortcut(_ code: UInt16, _ second: UInt16? = nil, to binding: AppShortcut, recorder: KeyRecorder) -> Bool {
         guard bindings.contains(where: { $0.path == binding.path }) else { return false }
         guard shortcutKeyAvailable(code), second.map({ self.shortcutKeyAvailable($0) }) ?? true else { return false }
         let conflicts = shortcutConflicts(code, second, excluding: binding.path)
-        // A window action on the first key would take precedence; the Windows page shares this rule.
+        // A window action on the first key takes precedence; the Windows page shares this rule.
         let windowOwner = windowShortcuts.command(for: code)
-        let key = keyName(code) ?? "?"
         var inUse = conflicts.inUse
-        if let command = windowOwner { inUse.append("Caps + \(key) already runs \(command.title).") }
+        if let command = windowOwner { inUse.append("Caps + \(keyName(code) ?? "?") already runs \(command.title).") }
         let losers = conflicts.indices.map { bindings[$0].name } + (windowOwner.map { [$0.title] } ?? [])
         let name = shortcutName(code, second) ?? "?"
         if !losers.isEmpty {
@@ -115,27 +232,26 @@ extension AppDelegate {
         setStatus("Saved: \(binding.name) → Caps + \(name)\(replacement)")
         return true
     }
-    // Other apps whose shortcut Caps + code (+ second) would take, with one sentence per
-    // kind of use for the confirmation: the same shortcut, the key used alone while a
-    // two-key shortcut is set, or two-key shortcuts starting with a key set alone.
+    // Other apps that already use exactly Caps + code (+ second).
     func shortcutConflicts(_ code: UInt16, _ second: UInt16?, excluding path: String?) -> (indices: [Int], inUse: [String]) {
-        let others = bindings.indices.filter { bindings[$0].path != path && bindings[$0].hasShortcut && bindings[$0].key == code }
-        let same = others.filter { bindings[$0].secondKey == second }
-        let alone = second == nil ? [] : others.filter { bindings[$0].secondKey == nil }
-        let starts = second == nil ? others.filter { bindings[$0].secondKey != nil } : []
+        let same = bindings.indices.filter { bindings[$0].path != path && bindings[$0].matches(code, second) }
+        guard !same.isEmpty else { return ([], []) }
+        return (same, ["Caps + \(shortcutName(code, second) ?? "?") already opens \(listNames(same.map { bindings[$0].name }))."])
+    }
+    // Apps a window action on `code` would take: window keys win over app shortcuts,
+    // including two-key shortcuts that start with the key.
+    func firstKeyConflicts(_ code: UInt16) -> (indices: [Int], inUse: [String]) {
+        let others = bindings.indices.filter { bindings[$0].hasShortcut && bindings[$0].key == code }
+        let alone = others.filter { bindings[$0].secondKey == nil }
+        let starts = others.filter { bindings[$0].secondKey != nil }
         let key = keyName(code) ?? "?"
         var inUse: [String] = []
-        if !same.isEmpty {
-            inUse.append("Caps + \(shortcutName(code, second) ?? "?") already opens \(listNames(same.map { bindings[$0].name })).")
-        }
-        if !alone.isEmpty {
-            inUse.append("Caps + \(key) already opens \(listNames(alone.map { bindings[$0].name })).")
-        }
+        if !alone.isEmpty { inUse.append("Caps + \(key) already opens \(listNames(alone.map { bindings[$0].name })).") }
         if !starts.isEmpty {
             let names = starts.map { "\(bindings[$0].name) (\(shortcutName(code, bindings[$0].secondKey) ?? "?"))" }
             inUse.append("Caps + \(key) already starts \(listNames(names)).")
         }
-        return (same + alone + starts, inUse)
+        return (alone + starts, inUse)
     }
     // Caps + Space opens Folders, so neither list can take it.
     func shortcutKeyAvailable(_ code: UInt16) -> Bool {
