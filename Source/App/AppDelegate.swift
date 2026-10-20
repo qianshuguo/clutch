@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var permissionTimer: Timer?
     var state = KeyboardState()
     var lastKeyEventUptime: TimeInterval = 0
+    // Keys consumed by a Caps recording in the App List, whose releases are consumed too.
+    var recordingCapsKeys = Set<UInt16>()
     let mapping = CapsMapping()
     var wantsEnabled = false
     var starting = false

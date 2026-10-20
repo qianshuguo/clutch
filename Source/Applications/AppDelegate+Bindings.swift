@@ -82,22 +82,33 @@ final class ApplicationWindowCycle {
 }
 
 extension AppDelegate {
-    func assignShortcut(_ code: UInt16, to binding: AppShortcut, recorder: KeyRecorder) -> Bool {
+    // `second` makes a two-key shortcut (Caps + code + second). A one-key shortcut and
+    // two-key shortcuts starting with the same key can coexist: the one-key shortcut
+    // then runs when that key is released without a second key.
+    func assignShortcut(_ code: UInt16, _ second: UInt16? = nil, to binding: AppShortcut, recorder: KeyRecorder) -> Bool {
         guard bindings.contains(where: { $0.path == binding.path }) else { return false }
-        guard shortcutKeyAvailable(code) else { return false }
-        // A key belongs to one app or one window action; the Windows page shares this rule.
+        guard shortcutKeyAvailable(code), second.map({ self.shortcutKeyAvailable($0) }) ?? true else { return false }
+        if second == code {
+            NSSound.beep()
+            setStatus("Choose two different keys.")
+            return false
+        }
+        // A shortcut belongs to one app; its first key cannot also be a window action
+        // (window actions take precedence). The Windows page shares this rule.
         let windowOwner = windowShortcuts.command(for: code)
-        let replacedNames: [String] = bindings.indices.filter { bindings[$0].path != binding.path && bindings[$0].key == code }
+        let replacedNames: [String] = bindings.indices.filter { bindings[$0].path != binding.path && bindings[$0].matches(code, second) }
             .map { bindings[$0].name } + (windowOwner.map { [$0.title] } ?? [])
+        let name = shortcutName(code, second) ?? "?"
         if !replacedNames.isEmpty {
             recorder.cancelRecording()
-            guard confirmShortcutReplacement(code, owners: replacedNames, newOwner: binding.name) else { return false }
+            guard confirmShortcutReplacement(name, owners: replacedNames, newOwner: binding.name) else { return false }
         }
         guard let index = bindings.firstIndex(where: { $0.path == binding.path }) else { return false }
-        for otherIndex in bindings.indices where otherIndex != index && bindings[otherIndex].key == code {
-            bindings[otherIndex].key = unassignedKey
+        for otherIndex in bindings.indices where otherIndex != index && bindings[otherIndex].matches(code, second) {
+            bindings[otherIndex].clearShortcut()
         }
         bindings[index].key = code
+        bindings[index].secondKey = second
         // Finish recording before reload removes the focused view.
         recorder.recording = false
         saveBindings()
@@ -106,7 +117,7 @@ extension AppDelegate {
             saveWindowShortcuts()
         }
         let replacement = replacedNames.isEmpty ? "" : ". Cleared shortcut for \(replacedNames.joined(separator: ", "))"
-        setStatus("Saved: \(binding.name) → Caps + \(keyName(code) ?? "?")\(replacement)")
+        setStatus("Saved: \(binding.name) → Caps + \(name)\(replacement)")
         return true
     }
     // Caps + Space opens Folders, so neither list can take it.
@@ -117,10 +128,13 @@ extension AppDelegate {
         return false
     }
     func confirmShortcutReplacement(_ code: UInt16, owners: [String], newOwner: String) -> Bool {
+        confirmShortcutReplacement(keyName(code) ?? "?", owners: owners, newOwner: newOwner)
+    }
+    func confirmShortcutReplacement(_ shortcut: String, owners: [String], newOwner: String) -> Bool {
         let names = owners.joined(separator: ", ")
         let alert = NSAlert()
         alert.messageText = "Replace shortcut?"
-        alert.informativeText = "Caps + \(keyName(code) ?? "?") is already assigned to \(names). Replace it with \(newOwner)? \(names) will stay in the list without a shortcut."
+        alert.informativeText = "Caps + \(shortcut) is already assigned to \(names). Replace it with \(newOwner)? \(names) will stay in the list without a shortcut."
         let replaceButton = alert.addButton(withTitle: "Replace")
         replaceButton.keyEquivalent = "\r"
         replaceButton.keyEquivalentModifierMask = []

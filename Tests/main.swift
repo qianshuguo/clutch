@@ -75,6 +75,82 @@ for key: UInt16 in [1, 3, 17, 8, 9, 0, 18, 36] {
 }
 state.reset()
 print("PASS: repeated app shortcuts across default and custom mappings")
+// Two-key shortcuts: Caps + M + W (M = 46, W = 13). M may also have a one-key shortcut.
+func comboRoute(_ key: UInt16, down: Bool = true, repeated: Bool = false, bound: Bool = false,
+                prefix: Bool = false, combo: Bool = false) -> KeyboardState.Result {
+    state.route(key: key, down: down, repeated: repeated, bound: bound, prefix: prefix, comboBound: combo)
+}
+for mWasReleasedFirst in [false, true] {
+    state.reset()
+    capsDown()
+    let wait = comboRoute(46, bound: true, prefix: true)
+    expect(wait.swallow && wait.launch == nil && state.pendingPrefix == 46, "a prefix key waits for the second key")
+    expect(comboRoute(46, repeated: true, bound: true, prefix: true).swallow && state.pendingPrefix == 46, "prefix repeats are consumed and keep waiting")
+    if mWasReleasedFirst {
+        let mRelease = comboRoute(46, down: false)
+        expect(mRelease.swallow && mRelease.launch == nil && state.pendingPrefix == 46, "releasing the prefix keeps waiting while Caps is held")
+    }
+    let second = comboRoute(13, combo: true)
+    expect(second.swallow && second.launch == 13 && second.launchCombo && state.pendingPrefix == nil, "Caps + M + W runs the two-key shortcut")
+    expect(comboRoute(13, repeated: true, combo: true).launch == nil, "holding the second key does not repeat")
+    if !mWasReleasedFirst {
+        let mRelease = comboRoute(46, down: false)
+        expect(mRelease.swallow && mRelease.launch == nil, "the prefix release after a combo is consumed without its one-key shortcut")
+    }
+    expect(comboRoute(13, down: false).swallow, "the second key release is consumed")
+    let capsUp = releaseCaps()
+    expect(!capsUp.tap && capsUp.launch == nil, "two-key gestures never replay Caps or run the one-key shortcut")
+}
+state.reset()
+capsDown()
+_ = comboRoute(46, bound: true, prefix: true)
+_ = comboRoute(46, down: false)
+let capsUpAfterPrefix = releaseCaps()
+expect(capsUpAfterPrefix.launch == 46 && !capsUpAfterPrefix.launchCombo && !capsUpAfterPrefix.tap && state.pendingPrefix == nil,
+       "releasing Caps with no second key runs the prefix's one-key shortcut")
+capsDown()
+_ = comboRoute(46, bound: false, prefix: true)
+expect(releaseCaps().launch == nil, "a prefix without a one-key shortcut runs nothing")
+// Repeated taps of a prefix key still cycle windows: one activation per tap.
+capsDown()
+var activations = 0
+for tap in 0..<3 {
+    if comboRoute(46, bound: true, prefix: true).launch == 46 { activations += 1 }
+    expect(state.pendingPrefix == 46, "a repeated prefix keeps waiting (tap \(tap))")
+    _ = comboRoute(46, down: false)
+}
+if releaseCaps().launch == 46 { activations += 1 }
+expect(activations == 3, "three prefix taps run the one-key shortcut three times")
+capsDown()
+_ = comboRoute(46, bound: false, prefix: true)
+_ = comboRoute(46, down: false)
+let unmatched = comboRoute(11, bound: true)
+expect(unmatched.launch == 11 && !unmatched.launchCombo && state.pendingPrefix == nil, "an unmatched second key cancels the prefix and is handled normally")
+_ = comboRoute(11, down: false)
+_ = comboRoute(46, bound: true, prefix: true)
+_ = comboRoute(7, bound: false)
+expect(releaseCaps().launch == nil, "a cancelled prefix does not run on Caps release")
+capsDown()
+_ = comboRoute(46, bound: true, prefix: true)
+_ = state.modifierChanged(otherModifier: true)
+expect(releaseCaps().launch == nil, "a modifier during the wait cancels the one-key shortcut")
+state.reset()
+capsDown()
+_ = comboRoute(46, bound: true, prefix: true)
+state.cancelGesture()
+expect(state.pendingPrefix == nil && comboRoute(13, combo: true).launch == nil, "focus changes cancel a waiting prefix")
+state.reset()
+capsDown()
+_ = comboRoute(46, bound: true, prefix: true)
+state.capsReleaseMissed()
+expect(state.pendingPrefix == nil && !state.held, "a hidden Caps release ends the wait without running anything")
+state.reset()
+expect(!comboRoute(46, prefix: true).swallow && state.pendingPrefix == nil, "without Caps a prefix key types normally")
+capsDown()
+let windowFirst = state.route(key: 123, down: true, repeated: false, bound: false, prefix: true, windowKey: true)
+expect(windowFirst.window == 123 && state.pendingPrefix == nil, "window keys keep precedence over prefixes")
+state.reset()
+print("PASS: two-key shortcuts, waiting prefix, Caps release, repeated taps, cancellation, precedence")
 let src = MappingPolicy.src, dst = MappingPolicy.dst
 let other: [String: UInt64] = [src: 0x700000004, dst: 0x700000005]
 let oldCaps: [String: UInt64] = [src: MappingPolicy.caps, dst: 0x7000000E0]

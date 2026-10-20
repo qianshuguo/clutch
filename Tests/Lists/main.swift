@@ -89,13 +89,13 @@ expect(owner.state.route(key: 79, down: false, repeated: false, bound: false, sh
        "standalone Caps still replays after recording begins")
 expect(applications.table.selectedRow == 0, "recording selects the originating application table")
 expect(owner.table?.selectedRow == -1, "recording does not select a different table")
-expect(recorder.title == "F", "assigned key label is preserved")
+expect(recorder.title == "Caps + F", "assigned key label is preserved")
 let header = PlainListHeaderView(frame: NSRect(x: 0, y: 0, width: 460, height: 28))
 header.tableView = applications.table
 header.layout()
-let prefix = cell.subviews.compactMap { $0 as? NSTextField }.first!
+expect(!cell.subviews.contains { $0 is NSTextField }, "the shortcut field includes Caps; there is no separate label")
 let detailColumn = applications.table.frameOfCell(atColumn: 1, row: 0)
-expect(abs(header.secondLabel.frame.minX - (detailColumn.minX + prefix.frame.minX)) < 0.01,
+expect(abs(header.secondLabel.frame.minX - (detailColumn.minX + recorder.frame.minX)) < 0.01,
        "shortcut header aligns with the actual row contents")
 for (content, controller) in [(preferences.content, preferences.controller), (picker.content, picker.controller)] {
     let scroll = content.subviews.compactMap { $0 as? ListScrollView }.first!
@@ -104,8 +104,38 @@ for (content, controller) in [(preferences.content, preferences.controller), (pi
     expect(content.subviews.contains { $0 is PlainListHeaderView } == !isPicker,
            "only preferences has a header")
 }
+expect(!owner.assignShortcut(46, 46, to: owner.bindings[0], recorder: recorder), "a two-key shortcut needs two different keys")
+expect(!owner.assignShortcut(46, KeyCode.space, to: owner.bindings[0], recorder: recorder), "Space stays reserved as a second key")
+expect(owner.assignShortcut(46, 13, to: owner.bindings[0], recorder: recorder)
+       && owner.bindings[0].key == 46 && owner.bindings[0].secondKey == 13, "Caps + M + W is assigned without asking")
+let comboCell = applications.tableView(applications.table, viewFor: applications.table.tableColumns[1], row: 0)!
+expect(comboCell.subviews.compactMap { $0 as? KeyRecorder }.first?.title == "Caps + M + W", "two-key shortcuts show both keys")
+expect(owner.assignShortcut(3, to: owner.bindings[0], recorder: recorder) && owner.bindings[0].secondKey == nil, "assigning one key clears the second key")
+// Recording as used: Caps held, T then H, Caps released.
+recorder.recording = true
+expect(recorder.prompt == (owner.tap == nil ? "Turn on HyperCaps" : "Hold Caps + 1 or 2 keys"), "the prompt depends on whether HyperCaps can see Caps")
+recorder.capsAvailable = { true } // As if HyperCaps were enabled.
+expect(recorder.prompt == "Hold Caps + 1 or 2 keys", "App List asks for Caps + 1 or 2 keys")
+recorder.capsPressed()
+expect(recorder.title == "Caps + …", "pressing Caps shows the field is listening")
+recorder.capsReleased()
+expect(recorder.recording, "releasing Caps alone records nothing")
+expect(recorder.title == recorder.prompt, "releasing Caps alone shows the prompt again")
+recorder.capsPressed()
+recorder.capsKeyPressed(17)
+expect(recorder.title == "Caps + T + …", "the first Caps key waits for an optional second key")
+recorder.capsKeyPressed(4)
+expect(recorder.title == "Caps + T + H", "the field shows both keys while Caps is held")
+recorder.capsReleased()
+expect(!recorder.recording && owner.bindings[0].key == 17 && owner.bindings[0].secondKey == 4, "releasing Caps saves Caps + T + H")
+recorder.recording = true
+recorder.capsKeyPressed(17)
+recorder.capsReleased()
+expect(owner.bindings[0].key == 17 && owner.bindings[0].secondKey == nil, "one key then Caps release saves a one-key shortcut")
+let legacy = try! JSONDecoder().decode([AppShortcut].self, from: Data(#"[{"key":3,"name":"Old","path":"/tmp/old"}]"#.utf8))
+expect(legacy[0].key == 3 && legacy[0].secondKey == nil, "lists saved before two-key shortcuts still load")
 owner.bindings = []
-expect(recorder.onKey?(0) == false, "a removed binding cannot be assigned from a stale cell")
+expect(recorder.onKeys?(0, nil) == false, "a removed binding cannot be assigned from a stale cell")
 
 var invoked = 0
 let button = ListActionButton { invoked += 1 }
@@ -189,16 +219,16 @@ func windowRecorder(_ row: Int) -> KeyRecorder? {
         .subviews.compactMap { $0 as? KeyRecorder }.first
 }
 let centerRow = WindowCommand.allCases.firstIndex(of: .center)!
-expect(windowRecorder(centerRow)?.title == keyName(windowOwner.windowShortcuts.key(for: .center)) ?? "Click to set", "shortcut field shows the current key")
+expect(windowRecorder(centerRow)?.title == shortcutTitle(windowOwner.windowShortcuts.key(for: .center), nil), "shortcut field shows the current key")
 let savedWindowKeys = UserDefaults.standard.data(forKey: WindowShortcuts.defaultsKey)
 windowOwner.windowShortcuts = .defaults
 if let recorder = windowRecorder(centerRow) {
     expect(windowOwner.assignWindowShortcut(40, to: .center, recorder: recorder), "a free key is assigned without asking")
     expect(!windowOwner.assignWindowShortcut(KeyCode.space, to: .center, recorder: recorder), "Space stays reserved for Folders")
 }
-expect(windowOwner.windowShortcuts.key(for: .center) == 40 && windowRecorder(centerRow)?.title == "K", "assignment updates the list")
+expect(windowOwner.windowShortcuts.key(for: .center) == 40 && windowRecorder(centerRow)?.title == "Caps + K", "assignment updates the list")
 windowOwner.restoreDefaultWindowShortcuts()
-expect(windowOwner.windowShortcuts == .defaults && windowRecorder(centerRow)?.title == "/", "Restore Defaults brings back Caps + /")
+expect(windowOwner.windowShortcuts == .defaults && windowRecorder(centerRow)?.title == "Caps + /", "Restore Defaults brings back Caps + /")
 if let data = savedWindowKeys { UserDefaults.standard.set(data, forKey: WindowShortcuts.defaultsKey) }
 else { UserDefaults.standard.removeObject(forKey: WindowShortcuts.defaultsKey) }
 print("PASS: window shortcut list")

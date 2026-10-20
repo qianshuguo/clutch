@@ -60,11 +60,10 @@ final class CenteredOverlayScroller: NSScroller {
 
 enum ListGeometry {
     static let pathLeadingInset: CGFloat = 12
-    static let shortcutPrefixWidth: CGFloat = 46
-    static let shortcutRecorderOffset: CGFloat = 50
-    static let shortcutRecorderWidth: CGFloat = 116
+    // The field takes the space the separate “Caps +” label used to share with it.
+    static let shortcutRecorderWidth: CGFloat = 166
     static func shortcutOrigin(in column: NSRect) -> CGFloat {
-        column.maxX - shortcutRecorderOffset - shortcutRecorderWidth + shortcutTrailingOffset
+        column.maxX - shortcutRecorderWidth + shortcutTrailingOffset
     }
     static let leadingInset: CGFloat = 16
     static let trailingInset: CGFloat = 12

@@ -59,15 +59,11 @@ extension AppDelegate {
         name.font = .systemFont(ofSize: 13)
         name.lineBreakMode = .byTruncatingTail
     }
-    // “Caps +” and a clickable key field, right-aligned in a list's shortcut column.
+    // One clickable field showing the whole shortcut (“Caps + M + W”), right-aligned
+    // in a list's shortcut column.
     func addShortcutRecorder(to cell: NSView, width: CGFloat, key: UInt16, table: NSTableView) -> KeyRecorder {
-        let prefix = NSTextField(labelWithString: "Caps +")
         let shortcutX = ListGeometry.shortcutOrigin(in: NSRect(x: 0, y: 0, width: width, height: 0))
-        prefix.frame = NSRect(x: shortcutX, y: Self.listNameFrame.minY, width: ListGeometry.shortcutPrefixWidth, height: Self.listNameFrame.height)
-        prefix.autoresizingMask = [.minXMargin]
-        prefix.font = .systemFont(ofSize: 13)
-        cell.addSubview(prefix)
-        let recorder = KeyRecorder(frame: NSRect(x: shortcutX + ListGeometry.shortcutRecorderOffset, y: 3, width: ListGeometry.shortcutRecorderWidth, height: 24))
+        let recorder = KeyRecorder(frame: NSRect(x: shortcutX, y: 3, width: ListGeometry.shortcutRecorderWidth, height: 24))
         recorder.selectionTable = table
         recorder.autoresizingMask = [.minXMargin]
         recorder.bezelStyle = .rounded
@@ -75,7 +71,8 @@ extension AppDelegate {
         recorder.appearance = NSAppearance(named: .aqua)
         recorder.controlSize = .small
         recorder.font = .systemFont(ofSize: 12)
-        recorder.title = keyName(key) ?? "Click to set"
+        recorder.title = shortcutTitle(key, nil)
+        recorder.capsAvailable = { [weak self] in self?.tap != nil }
         cell.addSubview(recorder)
         return recorder
     }

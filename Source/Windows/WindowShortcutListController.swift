@@ -47,7 +47,7 @@ final class WindowShortcutListController: NSObject, NSTableViewDataSource, NSTab
             self?.owner.state.cancelGesture()
             self?.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
-        recorder.onKey = { [weak self, weak recorder] code in
+        recorder.onKeys = { [weak self, weak recorder] code, _ in
             guard let self = self, let recorder = recorder else { return false }
             return self.owner.assignWindowShortcut(code, to: command, recorder: recorder)
         }
@@ -61,14 +61,15 @@ extension AppDelegate {
     func assignWindowShortcut(_ code: UInt16, to command: WindowCommand, recorder: KeyRecorder) -> Bool {
         guard shortcutKeyAvailable(code) else { return false }
         let otherCommand = windowShortcuts.command(for: code).flatMap { $0 == command ? nil : $0 }
-        let appNames = bindings.filter { $0.key == code }.map { $0.name }
+        // Covers one-key shortcuts and two-key shortcuts that start with this key.
+        let appNames = bindings.filter { $0.hasShortcut && $0.key == code }.map { $0.name }
         let replacedNames: [String] = appNames + (otherCommand.map { [$0.title] } ?? [])
         if !replacedNames.isEmpty {
             recorder.cancelRecording()
             guard confirmShortcutReplacement(code, owners: replacedNames, newOwner: command.title) else { return false }
         }
         if !appNames.isEmpty {
-            for index in bindings.indices where bindings[index].key == code { bindings[index].key = unassignedKey }
+            for index in bindings.indices where bindings[index].hasShortcut && bindings[index].key == code { bindings[index].clearShortcut() }
             saveBindings()
         }
         windowShortcuts.assign(code, to: command)
@@ -99,6 +100,7 @@ extension AppDelegate {
         button.autoresizingMask = [.minXMargin]
         content.addSubview(button)
         addListHelp([
+            ("Set a shortcut", "Hold Caps + a key"),
             ("Left / Right Half again", "Cycle ½ → ⅔ → ⅓"),
             ("Fill Height again", "Fill the screen"),
             ("Restore", "Size before HyperCaps moved it"),
@@ -112,7 +114,7 @@ extension AppDelegate {
         if !conflicts.isEmpty {
             let alert = NSAlert()
             alert.messageText = "Restore default window shortcuts?"
-            let list = conflicts.map { "\($0.name) (Caps + \(keyName($0.key) ?? "?"))" }.joined(separator: ", ")
+            let list = conflicts.map { "\($0.name) (Caps + \(shortcutName($0.key, $0.secondKey) ?? "?"))" }.joined(separator: ", ")
             alert.informativeText = "These apps will stay in App List without a shortcut: \(list)."
             let restoreButton = alert.addButton(withTitle: "Restore")
             restoreButton.keyEquivalent = "\r"
@@ -122,7 +124,7 @@ extension AppDelegate {
             cancelButton.keyEquivalentModifierMask = []
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             for index in bindings.indices where defaults.command(for: bindings[index].key) != nil {
-                bindings[index].key = unassignedKey
+                bindings[index].clearShortcut()
             }
             saveBindings()
         }

@@ -11,7 +11,7 @@ final class ApplicationListController: NSObject, NSTableViewDataSource, NSTableV
         table.delegate = self
         table.dataSource = self
         table.allowsMultipleSelection = true
-        // Every shortcut cell contains “Caps +”; native type selection is misleading.
+        // Every shortcut field starts with “Caps +”; native type selection is misleading.
         table.allowsTypeSelect = false
     }
     func tableView(_ tableView: NSTableView, selectionIndexesForProposedSelection proposedSelectionIndexes: IndexSet) -> IndexSet {
@@ -35,13 +35,15 @@ final class ApplicationListController: NSObject, NSTableViewDataSource, NSTableV
             return cell
         }
         let recorder = owner.addShortcutRecorder(to: cell, width: cellWidth, key: binding.key, table: tableView)
+        recorder.title = shortcutTitle(binding.key, binding.secondKey)
         recorder.onStart = { [weak self] in
             self?.owner.state.cancelGesture()
             self?.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
-        recorder.onKey = { [weak self, weak recorder] code in
+        recorder.maxKeys = 2
+        recorder.onKeys = { [weak self, weak recorder] code, second in
             guard let self = self, let recorder = recorder else { return false }
-            return self.owner.assignShortcut(code, to: binding, recorder: recorder)
+            return self.owner.assignShortcut(code, second, to: binding, recorder: recorder)
         }
         return cell
     }

@@ -166,8 +166,17 @@ extension AppDelegate {
         // Reuse this binding after routing instead of searching the list twice.
         let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
         let windowCommand = windowShortcuts.command(for: key)
-        let binding = shortcutsEnabled && type == .keyDown && state.held && key != KeyCode.hyper && key != KeyCode.space && panel == nil && !repeated && windowCommand == nil
-            ? bindings.first(where: { $0.key == key }) : nil
+        let eligible = shortcutsEnabled && type == .keyDown && state.held && key != KeyCode.hyper && key != KeyCode.space && panel == nil && !repeated
+        let binding = eligible && windowCommand == nil ? bindings.first(where: { $0.matches(key, nil) }) : nil
+        let prefix = eligible && windowCommand == nil && bindings.contains(where: { $0.hasShortcut && $0.key == key && $0.secondKey != nil })
+        // Second key after a waiting prefix (Caps + M + W).
+        let pendingPrefix = state.pendingPrefix
+        let combo = eligible ? pendingPrefix.flatMap { first in
+            first == key ? nil : bindings.first(where: { $0.matches(first, key) }) } : nil
+        // Releasing Caps while a prefix waits may run the prefix's one-key shortcut.
+        let releasedSingle = type == .keyUp && key == KeyCode.hyper
+            ? pendingPrefix.flatMap { first in bindings.first(where: { $0.matches(first, nil) }) } : nil
+        let capsWasHeld = state.held
         let result: KeyboardState.Result
         if type == .flagsChanged {
             if key == KeyCode.capsLock { return Unmanaged.passUnretained(event) }
@@ -177,23 +186,30 @@ extension AppDelegate {
                                            pressed: pressed)
         } else {
             result = state.route(key: key, down: type == .keyDown,
-                                 repeated: repeated, bound: binding != nil, windowKey: windowCommand != nil,
+                                 repeated: repeated, bound: binding != nil, prefix: prefix, comboBound: combo != nil,
+                                 windowKey: windowCommand != nil,
                                  otherModifier: otherModifier, commandModifier: commandModifier,
                                  folderSelectionActive: panel != nil, folderCount: folders.count,
                                  shortcutsEnabled: shortcutsEnabled)
         }
+        if let swallowed = routeCapsRecording(type, key: key, capsWasHeld: capsWasHeld, repeated: repeated, flags: event.flags) {
+            if swallowed { return nil }
+        }
         if result.showFolders {
             afterKeyEvent { [weak self] in self?.showFolders() }
         }
-        if result.tap {
+        // While a field records, Caps is input to the field, not a Caps Lock toggle.
+        let recordingWithCaps = (window?.firstResponder as? KeyRecorder).map { $0.recording && $0.recordsWithCaps } ?? false
+        if result.tap && !recordingWithCaps {
             afterKeyEvent { [weak self] in
                 guard let self = self else { return }
                 do { try self.standaloneCaps() }
                 catch { self.failKeyboard(error: error) }
             }
         }
-        if result.launch != nil, let binding = binding {
-            afterKeyEvent { [weak self] in self?.activate(binding) }
+        if result.launch != nil,
+           let target = result.launchCombo ? combo : (type == .keyUp ? releasedSingle : binding) {
+            afterKeyEvent { [weak self] in self?.activate(target) }
         }
         if result.window != nil, let command = windowCommand {
             afterKeyEvent { [weak self] in self?.performWindowCommand(command) }
@@ -208,5 +224,33 @@ extension AppDelegate {
         // Other keys go to the focused view's native navigation and editing commands.
         if result.stripCommandModifier { event.flags.remove(.maskCommand) }
         return result.swallow ? nil : Unmanaged.passUnretained(event)
+    }
+    // App List fields are recorded the way shortcuts are used: keys pressed while Caps
+    // is held go to the recording field (and not to the window), and releasing Caps
+    // saves them. Returns true when the event is consumed, nil when not recording.
+    func routeCapsRecording(_ type: CGEventType, key: UInt16, capsWasHeld: Bool,
+                            repeated: Bool, flags: CGEventFlags) -> Bool? {
+        guard type == .keyDown || type == .keyUp,
+              let recorder = window?.firstResponder as? KeyRecorder, recorder.recording, recorder.recordsWithCaps else {
+            // Releases are only owned while recording; later ones pass through.
+            recordingCapsKeys.removeAll()
+            return nil
+        }
+        if key == KeyCode.hyper {
+            if type == .keyDown && !capsWasHeld && !repeated {
+                afterKeyEvent { [weak recorder] in recorder?.capsPressed() }
+            } else if type == .keyUp && capsWasHeld {
+                afterKeyEvent { [weak recorder] in recorder?.capsReleased() }
+            }
+            return false
+        }
+        if type == .keyUp { return recordingCapsKeys.remove(key) != nil }
+        guard capsWasHeld,
+              flags.intersection([.maskShift, .maskControl, .maskAlternate, .maskCommand]).isEmpty else { return false }
+        recordingCapsKeys.insert(key)
+        if !repeated {
+            afterKeyEvent { [weak recorder] in recorder?.capsKeyPressed(key) }
+        }
+        return true
     }
 }
