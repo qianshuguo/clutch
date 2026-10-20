@@ -28,7 +28,7 @@ final class LaunchHUDView: NSVisualEffectView {
     static let transition: TimeInterval = 0.18
     private static let keyInset: CGFloat = 9
     private static let keyBottom: CGFloat = 9
-    private static let returnGlyphOffset: CGFloat = -1
+    private static let returnGlyphOffset: CGFloat = -2
     private static let labelInset: CGFloat = 12
 
     init() {
@@ -50,7 +50,6 @@ final class LaunchHUDView: NSVisualEffectView {
             label.alignment = .center
             label.lineBreakMode = .byTruncatingTail
         }
-        let keyWidth = (size.width - Self.keyInset * 2) / 2
         for key in [cancelKey, openKey] {
             key.font = .systemFont(ofSize: 10)
             key.textColor = .secondaryLabelColor
@@ -65,8 +64,17 @@ final class LaunchHUDView: NSVisualEffectView {
             .paragraphStyle: rightAligned])
         returnGlyph.addAttribute(.baselineOffset, value: Self.returnGlyphOffset, range: NSRange(location: 0, length: 1))
         openKey.attributedStringValue = returnGlyph
-        cancelKey.frame = NSRect(x: Self.keyInset, y: Self.keyBottom, width: keyWidth, height: 13)
-        openKey.frame = NSRect(x: Self.keyInset + keyWidth, y: Self.keyBottom, width: keyWidth, height: 13)
+        // Sized to their text and pinned to the corners. The lowered ↩ makes the right
+        // label taller at the bottom, so it moves down by that much to keep both
+        // labels' text on the same baseline.
+        cancelKey.sizeToFit()
+        openKey.sizeToFit()
+        let cancelSize = cancelKey.frame.size, openSize = openKey.frame.size
+        cancelKey.frame = NSRect(x: Self.keyInset, y: Self.keyBottom,
+                                 width: cancelSize.width, height: cancelSize.height)
+        openKey.frame = NSRect(x: size.width - Self.keyInset - openSize.width,
+                               y: Self.keyBottom - max(0, openSize.height - cancelSize.height),
+                               width: openSize.width, height: openSize.height)
         [iconView, nameLabel, openLabel, cancelKey, openKey].forEach { addSubview($0) }
         setConfirming(false, animated: false)
     }
@@ -97,15 +105,21 @@ final class LaunchHUDView: NSVisualEffectView {
             openKey.alphaValue = confirming ? 1 : 0
             return
         }
+        // The name and "Open?" switch at once, already in their final place, with
+        // Core Animation's implicit actions off so nothing fades or slides. Only the
+        // icon and the key labels animate.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        nameLabel.frame = labelFrame
+        openLabel.frame = labelFrame
+        nameLabel.alphaValue = confirming ? 0 : 1
+        openLabel.alphaValue = confirming ? 1 : 0
+        CATransaction.commit()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.transition
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             context.allowsImplicitAnimation = true
             self.iconView.animator().frame = iconFrame
-            self.nameLabel.animator().frame = labelFrame
-            self.openLabel.animator().frame = labelFrame
-            self.nameLabel.animator().alphaValue = confirming ? 0 : 1
-            self.openLabel.animator().alphaValue = confirming ? 1 : 0
             self.cancelKey.animator().alphaValue = confirming ? 1 : 0
             self.openKey.animator().alphaValue = confirming ? 1 : 0
         }
