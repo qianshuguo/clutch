@@ -3,9 +3,8 @@ import Foundation
 // A standalone Caps release requests a system Caps press; a bound chord launches once.
 // Two-key shortcuts (Caps + M + W) use the first key as a prefix: pressing it waits
 // for the second key for as long as Caps stays held; the prefix itself may be released.
-// If no second key follows, releasing Caps runs the prefix's one-key shortcut, if any.
-// Pressing the prefix again runs that one-key shortcut for the previous press, so
-// repeated taps still cycle windows.
+// A key is either a one-key shortcut or a prefix, never both (App List enforces this),
+// so one-key shortcuts always act on press.
 struct KeyboardState {
     struct Result {
         var swallow = false
@@ -23,8 +22,6 @@ struct KeyboardState {
     private(set) var chord = false
     // First key of a two-key shortcut, waiting for its second key.
     private(set) var pendingPrefix: UInt16?
-    // Whether releasing Caps (or pressing the prefix again) runs its one-key shortcut.
-    private var pendingSingle = false
     private var otherModifierGesture = false
     private var folderGesture = false
     private var folderSelectionEntered = false
@@ -74,13 +71,11 @@ struct KeyboardState {
             }
             let openSelection = held && folderSelectionActive && folderSelectionEntered
             let tap = held && !chord && !otherModifierGesture
-            // A prefix still waiting when Caps is released runs its one-key shortcut.
-            let single = held && pendingPrefix != nil && pendingSingle && shortcutsEnabled && !otherModifierGesture
-            let launch = single ? pendingPrefix : nil
-            pendingPrefix = nil; pendingSingle = false
+            // A prefix still waiting when Caps is released does nothing.
+            pendingPrefix = nil
             held = false
             folderSelectionEntered = false
-            return Result(swallow: true, tap: tap, openFolderSelection: openSelection, launch: launch)
+            return Result(swallow: true, tap: tap, openFolderSelection: openSelection)
         }
         // Only a new key press makes a chord. A release of a key that was still
         // down when Caps was pressed (fast typing) keeps the standalone Caps.
@@ -91,15 +86,11 @@ struct KeyboardState {
         if consumed.contains(key) { return Result(swallow: true) }
         let actionAllowed = shortcutsEnabled && held && !folderSelectionActive && !repeated
             && !otherModifierGesture && !otherModifier && !folderGesture && !commandModifier
-        // The key after a prefix completes a two-key shortcut. Pressing the prefix again
-        // runs its one-key shortcut and keeps waiting. Any other key cancels the prefix
-        // (its one-key shortcut no longer runs) and is handled normally.
-        if let waiting = pendingPrefix {
-            if key == waiting && actionAllowed {
-                consumed.insert(key)
-                return Result(swallow: true, launch: pendingSingle ? key : nil)
-            }
-            pendingPrefix = nil; pendingSingle = false
+        // The key after a prefix completes a two-key shortcut, including the same key
+        // again (Caps + M + M). Any other key cancels the wait and is handled normally
+        // (the prefix itself then simply starts waiting again).
+        if pendingPrefix != nil {
+            pendingPrefix = nil
             if actionAllowed && comboBound {
                 consumed.insert(key)
                 return Result(swallow: true, launch: key, launchCombo: true)
@@ -134,7 +125,6 @@ struct KeyboardState {
         if actionAllowed && prefix && !windowKey {
             consumed.insert(key)
             pendingPrefix = key
-            pendingSingle = bound
             return Result(swallow: true)
         }
         if shortcutsEnabled && held && !folderSelectionActive && bound && !windowKey && !repeated && !otherModifierGesture && !otherModifier && !folderGesture && !commandModifier {

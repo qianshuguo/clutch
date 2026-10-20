@@ -56,17 +56,20 @@ final class WindowShortcutListController: NSObject, NSTableViewDataSource, NSTab
 }
 
 extension AppDelegate {
-    // Same rule as App List: one key, one owner. Taking a key from an app or another
-    // action asks first and leaves the previous owner in its list without a shortcut.
+    // Same rule as App List: one key, one owner. Taking a key from an app (used alone or
+    // starting two-key shortcuts) or another action asks first and names who loses it.
     func assignWindowShortcut(_ code: UInt16, to command: WindowCommand, recorder: KeyRecorder) -> Bool {
         guard shortcutKeyAvailable(code) else { return false }
         let otherCommand = windowShortcuts.command(for: code).flatMap { $0 == command ? nil : $0 }
-        // Covers one-key shortcuts and two-key shortcuts that start with this key.
-        let appNames = bindings.filter { $0.hasShortcut && $0.key == code }.map { $0.name }
+        // As if setting the key alone: catches apps using it alone and two-key shortcuts starting with it.
+        let apps = shortcutConflicts(code, nil, excluding: nil)
+        let appNames = apps.indices.map { bindings[$0].name }
         let replacedNames: [String] = appNames + (otherCommand.map { [$0.title] } ?? [])
         if !replacedNames.isEmpty {
             recorder.cancelRecording()
-            guard confirmShortcutReplacement(code, owners: replacedNames, newOwner: command.title) else { return false }
+            let inUse = apps.inUse + (otherCommand.map { ["Caps + \(keyName(code) ?? "?") already runs \($0.title)."] } ?? [])
+            guard confirmShortcutReplacement(inUse: inUse, shortcut: keyName(code) ?? "?", newOwner: command.title,
+                                             losers: replacedNames) else { return false }
         }
         if !appNames.isEmpty {
             for index in bindings.indices where bindings[index].hasShortcut && bindings[index].key == code { bindings[index].clearShortcut() }

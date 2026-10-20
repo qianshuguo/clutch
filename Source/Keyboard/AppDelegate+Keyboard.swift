@@ -171,11 +171,7 @@ extension AppDelegate {
         let prefix = eligible && windowCommand == nil && bindings.contains(where: { $0.hasShortcut && $0.key == key && $0.secondKey != nil })
         // Second key after a waiting prefix (Caps + M + W).
         let pendingPrefix = state.pendingPrefix
-        let combo = eligible ? pendingPrefix.flatMap { first in
-            first == key ? nil : bindings.first(where: { $0.matches(first, key) }) } : nil
-        // Releasing Caps while a prefix waits may run the prefix's one-key shortcut.
-        let releasedSingle = type == .keyUp && key == KeyCode.hyper
-            ? pendingPrefix.flatMap { first in bindings.first(where: { $0.matches(first, nil) }) } : nil
+        let combo = eligible ? pendingPrefix.flatMap { first in bindings.first(where: { $0.matches(first, key) }) } : nil
         let capsWasHeld = state.held
         let result: KeyboardState.Result
         if type == .flagsChanged {
@@ -208,7 +204,7 @@ extension AppDelegate {
             }
         }
         if result.launch != nil,
-           let target = result.launchCombo ? combo : (type == .keyUp ? releasedSingle : binding) {
+           let target = result.launchCombo ? combo : binding {
             afterKeyEvent { [weak self] in self?.activate(target) }
         }
         if result.window != nil, let command = windowCommand {

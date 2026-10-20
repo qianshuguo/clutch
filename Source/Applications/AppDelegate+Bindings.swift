@@ -82,31 +82,26 @@ final class ApplicationWindowCycle {
 }
 
 extension AppDelegate {
-    // `second` makes a two-key shortcut (Caps + code + second). A one-key shortcut and
-    // two-key shortcuts starting with the same key can coexist: the one-key shortcut
-    // then runs when that key is released without a second key.
+    // `second` makes a two-key shortcut (Caps + code + second). One rule keeps every
+    // shortcut immediate: a key either opens an app by itself or starts two-key
+    // shortcuts, never both. Taking a key asks first and names who loses a shortcut.
     func assignShortcut(_ code: UInt16, _ second: UInt16? = nil, to binding: AppShortcut, recorder: KeyRecorder) -> Bool {
         guard bindings.contains(where: { $0.path == binding.path }) else { return false }
         guard shortcutKeyAvailable(code), second.map({ self.shortcutKeyAvailable($0) }) ?? true else { return false }
-        if second == code {
-            NSSound.beep()
-            setStatus("Choose two different keys.")
-            return false
-        }
-        // A shortcut belongs to one app; its first key cannot also be a window action
-        // (window actions take precedence). The Windows page shares this rule.
+        let conflicts = shortcutConflicts(code, second, excluding: binding.path)
+        // A window action on the first key would take precedence; the Windows page shares this rule.
         let windowOwner = windowShortcuts.command(for: code)
-        let replacedNames: [String] = bindings.indices.filter { bindings[$0].path != binding.path && bindings[$0].matches(code, second) }
-            .map { bindings[$0].name } + (windowOwner.map { [$0.title] } ?? [])
+        let key = keyName(code) ?? "?"
+        var inUse = conflicts.inUse
+        if let command = windowOwner { inUse.append("Caps + \(key) already runs \(command.title).") }
+        let losers = conflicts.indices.map { bindings[$0].name } + (windowOwner.map { [$0.title] } ?? [])
         let name = shortcutName(code, second) ?? "?"
-        if !replacedNames.isEmpty {
+        if !losers.isEmpty {
             recorder.cancelRecording()
-            guard confirmShortcutReplacement(name, owners: replacedNames, newOwner: binding.name) else { return false }
+            guard confirmShortcutReplacement(inUse: inUse, shortcut: name, newOwner: binding.name, losers: losers) else { return false }
         }
         guard let index = bindings.firstIndex(where: { $0.path == binding.path }) else { return false }
-        for otherIndex in bindings.indices where otherIndex != index && bindings[otherIndex].matches(code, second) {
-            bindings[otherIndex].clearShortcut()
-        }
+        for otherIndex in conflicts.indices { bindings[otherIndex].clearShortcut() }
         bindings[index].key = code
         bindings[index].secondKey = second
         // Finish recording before reload removes the focused view.
@@ -116,9 +111,31 @@ extension AppDelegate {
             windowShortcuts.clear(code)
             saveWindowShortcuts()
         }
-        let replacement = replacedNames.isEmpty ? "" : ". Cleared shortcut for \(replacedNames.joined(separator: ", "))"
+        let replacement = losers.isEmpty ? "" : ". Cleared shortcut for \(losers.joined(separator: ", "))"
         setStatus("Saved: \(binding.name) → Caps + \(name)\(replacement)")
         return true
+    }
+    // Other apps whose shortcut Caps + code (+ second) would take, with one sentence per
+    // kind of use for the confirmation: the same shortcut, the key used alone while a
+    // two-key shortcut is set, or two-key shortcuts starting with a key set alone.
+    func shortcutConflicts(_ code: UInt16, _ second: UInt16?, excluding path: String?) -> (indices: [Int], inUse: [String]) {
+        let others = bindings.indices.filter { bindings[$0].path != path && bindings[$0].hasShortcut && bindings[$0].key == code }
+        let same = others.filter { bindings[$0].secondKey == second }
+        let alone = second == nil ? [] : others.filter { bindings[$0].secondKey == nil }
+        let starts = second == nil ? others.filter { bindings[$0].secondKey != nil } : []
+        let key = keyName(code) ?? "?"
+        var inUse: [String] = []
+        if !same.isEmpty {
+            inUse.append("Caps + \(shortcutName(code, second) ?? "?") already opens \(listNames(same.map { bindings[$0].name })).")
+        }
+        if !alone.isEmpty {
+            inUse.append("Caps + \(key) already opens \(listNames(alone.map { bindings[$0].name })).")
+        }
+        if !starts.isEmpty {
+            let names = starts.map { "\(bindings[$0].name) (\(shortcutName(code, bindings[$0].secondKey) ?? "?"))" }
+            inUse.append("Caps + \(key) already starts \(listNames(names)).")
+        }
+        return (same + alone + starts, inUse)
     }
     // Caps + Space opens Folders, so neither list can take it.
     func shortcutKeyAvailable(_ code: UInt16) -> Bool {
@@ -127,14 +144,17 @@ extension AppDelegate {
         setStatus("Caps + Space is reserved for Folders. Choose another key.")
         return false
     }
-    func confirmShortcutReplacement(_ code: UInt16, owners: [String], newOwner: String) -> Bool {
-        confirmShortcutReplacement(keyName(code) ?? "?", owners: owners, newOwner: newOwner)
+    // "A", "A and B", "A, B and C".
+    func listNames(_ names: [String]) -> String {
+        guard names.count > 1 else { return names.first ?? "" }
+        return names.dropLast().joined(separator: ", ") + " and " + names.last!
     }
-    func confirmShortcutReplacement(_ shortcut: String, owners: [String], newOwner: String) -> Bool {
-        let names = owners.joined(separator: ", ")
+    // Example: "Caps + M already opens Mail." / "To use Caps + M + W for Word, Mail will lose its shortcut."
+    func confirmShortcutReplacement(inUse: [String], shortcut: String, newOwner: String, losers: [String]) -> Bool {
         let alert = NSAlert()
-        alert.messageText = "Replace shortcut?"
-        alert.informativeText = "Caps + \(shortcut) is already assigned to \(names). Replace it with \(newOwner)? \(names) will stay in the list without a shortcut."
+        alert.messageText = inUse.joined(separator: "\n")
+        let loses = losers.count == 1 ? "will lose its shortcut" : "will lose their shortcuts"
+        alert.informativeText = "To use Caps + \(shortcut) for \(newOwner), \(listNames(losers)) \(loses)."
         let replaceButton = alert.addButton(withTitle: "Replace")
         replaceButton.keyEquivalent = "\r"
         replaceButton.keyEquivalentModifierMask = []

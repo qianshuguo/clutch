@@ -51,7 +51,6 @@ final class KeyRecorder: NSButton {
         guard recording, recordsWithCaps else { return }
         if code == KeyCode.escape { cancelRecording(); return }
         guard keyName(code) != nil else { NSSound.beep(); return }
-        guard !recordedKeys.contains(code) else { return }
         guard recordedKeys.count < maxKeys else { NSSound.beep(); return }
         recordedKeys.append(code)
         if recordedKeys.count == 1 && maxKeys > 1 {
