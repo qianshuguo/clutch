@@ -1,7 +1,122 @@
 import Cocoa
 
+// Shared look of the launch hint (shown while Caps is held) and the launch
+// confirmation (shown after release when the app is not running). Both use this
+// view at the same fixed size, so the confirmation takes over without a visible change.
+enum LaunchHUD {
+    static let size = NSSize(width: 148, height: 148)
+    static let cornerRadius: CGFloat = 20
+
+    // The exact center of the screen with the key window (menu bar and Dock included).
+    static func frame() -> NSRect {
+        let screen = (NSScreen.main ?? NSScreen.screens.first)?.frame ?? .zero
+        return NSRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
+                      width: size.width, height: size.height)
+    }
+}
+
+// Two stages at one fixed size.
+// Hint (Caps held): a large icon over the app's name.
+// Confirmation (Caps released, app not running): a smaller icon over "Open?", with
+// "⎋ Cancel" in the bottom-left corner and "↩ Open" in the bottom-right.
+final class LaunchHUDView: NSVisualEffectView {
+    private let iconView = NSImageView()
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let openLabel = NSTextField(labelWithString: "Open?")
+    private let cancelKey = NSTextField(labelWithString: "⎋ Cancel")
+    private let openKey = NSTextField(labelWithString: "↩ Open")
+    static let transition: TimeInterval = 0.18
+    private static let keyInset: CGFloat = 9
+    private static let keyBottom: CGFloat = 9
+    private static let returnGlyphOffset: CGFloat = -1
+    private static let labelInset: CGFloat = 12
+
+    init() {
+        super.init(frame: NSRect(origin: .zero, size: LaunchHUD.size))
+        // Layer-backed so the stage change animates even inside the modal session.
+        wantsLayer = true
+        material = .hudWindow
+        blendingMode = .behindWindow
+        state = .active
+        let size = LaunchHUD.size, radius = LaunchHUD.cornerRadius
+        maskImage = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        for label in [nameLabel, openLabel] {
+            label.font = .systemFont(ofSize: 13, weight: .medium)
+            label.alignment = .center
+            label.lineBreakMode = .byTruncatingTail
+        }
+        let keyWidth = (size.width - Self.keyInset * 2) / 2
+        for key in [cancelKey, openKey] {
+            key.font = .systemFont(ofSize: 10)
+            key.textColor = .secondaryLabelColor
+        }
+        cancelKey.alignment = .left
+        openKey.alignment = .right
+        // The ↩ glyph sits high next to the text; lower just that character.
+        let rightAligned = NSMutableParagraphStyle()
+        rightAligned.alignment = .right
+        let returnGlyph = NSMutableAttributedString(string: "↩ Open", attributes: [
+            .font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: rightAligned])
+        returnGlyph.addAttribute(.baselineOffset, value: Self.returnGlyphOffset, range: NSRange(location: 0, length: 1))
+        openKey.attributedStringValue = returnGlyph
+        cancelKey.frame = NSRect(x: Self.keyInset, y: Self.keyBottom, width: keyWidth, height: 13)
+        openKey.frame = NSRect(x: Self.keyInset + keyWidth, y: Self.keyBottom, width: keyWidth, height: 13)
+        [iconView, nameLabel, openLabel, cancelKey, openKey].forEach { addSubview($0) }
+        setConfirming(false, animated: false)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    var icon: NSImage? {
+        get { iconView.image }
+        set { iconView.image = newValue }
+    }
+    var name: String {
+        get { nameLabel.stringValue }
+        set { nameLabel.stringValue = newValue }
+    }
+
+    func setConfirming(_ confirming: Bool, animated: Bool) {
+        let width = LaunchHUD.size.width
+        let iconSize: CGFloat = confirming ? 72 : 88
+        let iconFrame = NSRect(x: (width - iconSize) / 2, y: confirming ? 56 : 42, width: iconSize, height: iconSize)
+        let labelFrame = NSRect(x: Self.labelInset, y: confirming ? 30 : 14,
+                                width: width - Self.labelInset * 2, height: 18)
+        guard animated else {
+            iconView.frame = iconFrame
+            nameLabel.frame = labelFrame
+            openLabel.frame = labelFrame
+            nameLabel.alphaValue = confirming ? 0 : 1
+            openLabel.alphaValue = confirming ? 1 : 0
+            cancelKey.alphaValue = confirming ? 1 : 0
+            openKey.alphaValue = confirming ? 1 : 0
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.transition
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            self.iconView.animator().frame = iconFrame
+            self.nameLabel.animator().frame = labelFrame
+            self.openLabel.animator().frame = labelFrame
+            self.nameLabel.animator().alphaValue = confirming ? 0 : 1
+            self.openLabel.animator().alphaValue = confirming ? 1 : 0
+            self.cancelKey.animator().alphaValue = confirming ? 1 : 0
+            self.openKey.animator().alphaValue = confirming ? 1 : 0
+        }
+    }
+}
+
 final class LaunchConfirmationPanel: NSPanel {
     private(set) var dismissedByOutsideClick = false
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 
     func dismissForOutsideClick() {
         guard NSApp.modalWindow === self else { return }
@@ -35,29 +150,35 @@ final class LaunchConfirmationPanel: NSPanel {
     }
 }
 
+// "Open?" for an app that is not running. It opens as an exact copy of the launch
+// hint shown while Caps was held (same frame, icon and name), then the same window
+// animates to its second stage: "Open?" with ⎋ Cancel / ↩ Open.
 final class LaunchConfirmation: NSObject {
-    private let panel = LaunchConfirmationPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 88),
-                                styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
+    private let panel = LaunchConfirmationPanel(contentRect: NSRect(origin: .zero, size: LaunchHUD.size),
+                                styleMask: [.borderless], backing: .buffered, defer: false)
 
-    func run(appName: String) -> Bool {
+    // `hint` is the visible launch hint, if any: the confirmation takes its exact
+    // place and hides it once the confirmation is on screen.
+    func run(appName: String, icon: NSImage, replacing hint: LaunchHintOverlay? = nil) -> Bool {
         let previousFocus = PreviousFocus()
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
-        panel.isMovableByWindowBackground = true
-        guard let content = panel.contentView else { return false }
-        let label = NSTextField(wrappingLabelWithString: "Open \(appName)?")
-        label.font = .systemFont(ofSize: 17, weight: .semibold)
-        label.alignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
-            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24)
-        ])
-        panel.center()
+        let frame = hint?.visibleFrame ?? LaunchHUD.frame()
+        let content = LaunchHUDView()
+        content.icon = icon
+        content.name = appName
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle, .fullScreenAuxiliary]
+        panel.setFrame(frame, display: false)
+        panel.contentView = content
+        panel.invalidateShadow()
+
         NSApp.activateFromBackground()
         panel.makeKeyAndOrderFront(nil)
+        hint?.hideNow()
+        content.setConfirming(true, animated: true)
         let mouseDowns: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         let localMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseDowns) { [weak panel] event in
             if let panel = panel, event.window !== panel { panel.dismissForOutsideClick() }

@@ -82,56 +82,34 @@ final class ApplicationWindowCycle {
 }
 
 // While Caps is held, the app that releasing Caps would open: its icon and name in a
-// small HUD at the center of the screen. Like Command-Tab it appears only after a short
-// delay, so a quick Caps + key never flashes it; once on screen it follows each key at
-// once. It never takes focus or mouse events, and releasing Caps hides it before the
-// app is opened as usual.
+// small HUD at the center of the screen. It never takes focus or mouse events.
+// Releasing Caps hides it, unless the app is not running: then the launch
+// confirmation takes its place and animates to "Open?" in the same window.
 final class LaunchHintOverlay {
     // The app path last requested by the key handler, set synchronously in the tap
     // callback so each key press compares against it without waiting for the UI.
     var target: String?
     private var panel: NSPanel?
     private var shownPath: String?
-    private let iconView = NSImageView()
-    private let nameLabel = NSTextField(labelWithString: "")
-    static let size = NSSize(width: 148, height: 148)
-    static let iconSize: CGFloat = 88
-    static let cornerRadius: CGFloat = 20
+    private let content = LaunchHUDView()
     static let fade: TimeInterval = 0.12
-    static let delay: TimeInterval = 0.2
-    // Waiting out `delay`; the latest app wins when it fires.
-    private var delayTimer: Timer?
-    private var pending: AppShortcut?
-    private var onScreen = false
+
+    // The hint's frame while it is on screen, where a launch confirmation takes over.
+    var visibleFrame: NSRect? {
+        guard let panel = panel, panel.isVisible else { return nil }
+        return panel.frame
+    }
 
     func show(_ binding: AppShortcut) {
-        guard !onScreen else { present(binding); return }
-        pending = binding
-        guard delayTimer == nil else { return }
-        // A run-loop timer in common modes keeps firing during menu tracking and drags.
-        let timer = Timer(timeInterval: Self.delay, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
-            self.delayTimer = nil
-            if let binding = self.pending { self.pending = nil; self.present(binding) }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        delayTimer = timer
-    }
-    private func present(_ binding: AppShortcut) {
-        onScreen = true
         let panel = self.panel ?? makePanel()
         self.panel = panel
         if shownPath != binding.path {
             shownPath = binding.path
-            iconView.image = NSWorkspace.shared.icon(forFile: binding.path)
-            nameLabel.stringValue = binding.name
+            content.icon = NSWorkspace.shared.icon(forFile: binding.path)
+            content.name = binding.name
         }
         // The screen with the key window, where the user is working.
-        if let screen = NSScreen.main ?? NSScreen.screens.first {
-            let visible = screen.visibleFrame
-            panel.setFrameOrigin(NSPoint(x: visible.midX - Self.size.width / 2,
-                                         y: visible.midY - Self.size.height / 2))
-        }
+        panel.setFrame(LaunchHUD.frame(), display: false)
         if !panel.isVisible { panel.alphaValue = 0; panel.orderFrontRegardless() }
         guard panel.alphaValue < 1 else { return }
         NSAnimationContext.runAnimationGroup { context in
@@ -140,8 +118,6 @@ final class LaunchHintOverlay {
         }
     }
     func hide() {
-        delayTimer?.invalidate(); delayTimer = nil; pending = nil
-        onScreen = false
         guard let panel = panel, panel.isVisible else { return }
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = Self.fade
@@ -151,9 +127,17 @@ final class LaunchHintOverlay {
             if let panel = panel, panel.alphaValue == 0 { panel.orderOut(nil) }
         })
     }
+    // Without the fade, once a launch confirmation has taken the hint's place.
+    func hideNow() {
+        guard let panel = panel, panel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            panel.animator().alphaValue = 0
+        }
+        panel.orderOut(nil)
+    }
     private func makePanel() -> NSPanel {
-        let size = Self.size
-        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: LaunchHUD.size),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -163,25 +147,7 @@ final class LaunchHintOverlay {
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
-        let background = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
-        background.material = .hudWindow
-        background.blendingMode = .behindWindow
-        background.state = .active
-        let radius = Self.cornerRadius
-        background.maskImage = NSImage(size: size, flipped: false) { rect in
-            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-            return true
-        }
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.frame = NSRect(x: (size.width - Self.iconSize) / 2, y: 42,
-                                width: Self.iconSize, height: Self.iconSize)
-        nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        nameLabel.alignment = .center
-        nameLabel.lineBreakMode = .byTruncatingTail
-        nameLabel.frame = NSRect(x: 12, y: 14, width: size.width - 24, height: 18)
-        background.addSubview(iconView)
-        background.addSubview(nameLabel)
-        panel.contentView = background
+        panel.contentView = content
         return panel
     }
 }
@@ -334,17 +300,26 @@ extension AppDelegate {
         saveBindings()
         table.selectRowIndexes(selection, byExtendingSelection: false)
     }
-    func activate(_ binding: AppShortcut) {
-        guard !showingLaunchConfirmation else { return }
+    // Where the app is now (its saved path, or where its bundle ID moved) and its
+    // running instance, if any.
+    func locate(_ binding: AppShortcut) -> (url: URL?, running: NSRunningApplication?) {
         let workspace = NSWorkspace.shared
         let original = URL(fileURLWithPath:binding.path)
         let url = FileManager.default.fileExists(atPath:binding.path) ? original : binding.bundleID.flatMap { workspace.urlForApplication(withBundleIdentifier:$0) }
-        guard let target = url else { showError(ToolError(message:"Could not find \(binding.name). Add the application again.")); return }
+        guard let target = url else { return (nil, nil) }
         let bundleID = Bundle(url: target)?.bundleIdentifier ?? binding.bundleID
         let running = workspace.runningApplications.first {
             !$0.isTerminated && ($0.bundleURL?.standardizedFileURL == target.standardizedFileURL ||
                 (bundleID != nil && $0.bundleIdentifier == bundleID))
         }
+        return (target, running)
+    }
+    func activate(_ binding: AppShortcut) {
+        guard !showingLaunchConfirmation else { return }
+        let workspace = NSWorkspace.shared
+        // Checked again here: the app may have opened or quit while Caps was held.
+        let (url, running) = locate(binding)
+        guard let target = url else { showError(ToolError(message:"Could not find \(binding.name). Add the application again.")); return }
         if let app = running {
             let alreadyFrontmost = workspace.frontmostApplication?.processIdentifier == app.processIdentifier
             closePreferencesForAction()
@@ -359,7 +334,8 @@ extension AppDelegate {
         }
         showingLaunchConfirmation = true
         closePreferencesForAction(keepingApplicationActive: true)
-        let confirmed = LaunchConfirmation().run(appName: binding.name)
+        let confirmed = LaunchConfirmation().run(appName: binding.name, icon: workspace.icon(forFile: target.path),
+                                                 replacing: launchHint)
         showingLaunchConfirmation = false
         hideDockIfIdle()
         guard confirmed else { return }
