@@ -120,7 +120,7 @@ enum WindowAction: Equatable {
 // One Accessibility attribute write that moves a window toward its target frame.
 enum FrameWrite: Equatable { case size, position }
 
-// What HyperCaps last did to one window, and where the window was before.
+// What Clutch last did to one window, and where the window was before.
 struct WindowMemory: Equatable {
     var restoreFrame: CGRect
     var lastAction: WindowAction
@@ -177,7 +177,7 @@ enum WindowLayout {
     }
 
     // The action a command performs. A repeated command continues from the last
-    // action only while the window is still where HyperCaps put it.
+    // action only while the window is still where Clutch put it.
     static func action(for command: WindowCommand, current: CGRect, screen: CGRect, memory: WindowMemory?) -> WindowAction? {
         let last = memory.flatMap { same($0.lastFrame, current) ? $0.lastAction : nil }
         let steps = halfFractions.count
@@ -190,7 +190,7 @@ enum WindowLayout {
             return .rightHalf(step: 0)
         case .up:
             // ↑ toggles fill height ⇄ maximize. ↑ on a window that already spans top to
-            // bottom maximizes; ↑ on a window HyperCaps maximized goes back to full height.
+            // bottom maximizes; ↑ on a window Clutch maximized goes back to full height.
             // The history check covers apps that stop just short (terminal row grids).
             if last == .maximize { return .maximizeHeight }
             return fillsHeight(current, of: screen) || last == .maximizeHeight ? .maximize : .maximizeHeight
@@ -278,7 +278,7 @@ enum WindowLayout {
     }
 
     // The memory to keep after `action` moved the window from `before` to `after`.
-    // A window moved by hand since HyperCaps last touched it gets a new restore point.
+    // A window moved by hand since Clutch last touched it gets a new restore point.
     static func remember(_ action: WindowAction, before: CGRect, after: CGRect, memory: WindowMemory?) -> WindowMemory? {
         if action == .restore { return nil }
         let restoreFrame: CGRect

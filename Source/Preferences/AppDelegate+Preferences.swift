@@ -76,7 +76,7 @@ extension AppDelegate: NSToolbarDelegate {
         let activation = optionGroup(centerFromTop: 58, spacing: 4)
         let otherOptions = optionGroup(centerFromTop: 213, spacing: 14)
         activation.widthAnchor.constraint(equalTo: otherOptions.widthAnchor).isActive = true
-        toggleButton = NSButton(checkboxWithTitle: "Enable HyperCaps", target: self, action: #selector(toggle))
+        toggleButton = NSButton(checkboxWithTitle: "Enable Clutch", target: self, action: #selector(toggle))
         let notice = NSButton(title: "Waiting for Accessibility access", target: self, action: #selector(openPermissions))
         notice.isBordered = false
         notice.alignment = .left
@@ -101,7 +101,7 @@ extension AppDelegate: NSToolbarDelegate {
         loginCheckbox = NSButton(checkboxWithTitle: "Launch on Login", target: self, action: #selector(changeLoginLaunch))
         otherOptions.addArrangedSubview(loginCheckbox!)
         hideCheckbox = NSButton(checkboxWithTitle: "Hide Status Bar Icon", target: self, action: #selector(changeStatusIcon))
-        let hint = label("Open HyperCaps again to show Preferences.", frame: .zero, size: 11)
+        let hint = label("Open Clutch again to show Preferences.", frame: .zero, size: 11)
         hint.textColor = .secondaryLabelColor
         let visibility = NSStackView()
         visibility.orientation = .vertical
@@ -123,12 +123,15 @@ extension AppDelegate: NSToolbarDelegate {
         addListControls(to: apps, width: Self.preferenceSize.width,
                         add: { [weak self] in self?.addBinding() },
                         remove: { [weak self] in self?.removeBinding() }, itemName: "Application")
-        addListHelp([
+        let appsHelp = addListHelp([
             ("Caps + key, release Caps", "Switch to the app"),
             ("Set a shortcut", "Hold Caps + 1 or 2 keys"),
             ("Press again", "Next window of that app"),
-            ("Not running", "Asks first; Return opens it")
+            ("Not running", "Asks first; Return opens it"),
+            ("⌘F", "Search by app name"),
+            ("Type in the list", "Jump to an app by name")
         ], to: apps, trailing: Self.preferenceSize.width - 12)
+        addApplicationSearch(to: apps, list: applicationList, scroll: scroll, before: appsHelp)
         let folderContent = makeFoldersContent(size: Self.preferenceSize, presentation: .preferences)
         preferencesFolderList = folderContent.controller
         pages[2].addSubview(folderContent.content)
@@ -144,6 +147,37 @@ extension AppDelegate: NSToolbarDelegate {
         syncPreferences()
         selectPage(selectedPage)
         return content
+    }
+    // A small search field in the App List bottom bar, ending just before the ? button,
+    // plus the notice shown over the list when nothing matches.
+    func addApplicationSearch(to page: NSView, list: ApplicationListController, scroll: NSScrollView, before help: NSView) {
+        let search = NSSearchField()
+        search.controlSize = .small
+        search.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        search.placeholderString = "Search"
+        search.sendsSearchStringImmediately = true
+        search.target = list
+        search.action = #selector(ApplicationListController.searchChanged(_:))
+        search.delegate = list
+        search.setAccessibilityLabel("Search applications")
+        search.sizeToFit()
+        let width: CGFloat = 160
+        let height = search.frame.height
+        search.frame = NSRect(x: help.frame.minX - 8 - width, y: ((32 - height) / 2).rounded(),
+                              width: width, height: height)
+        search.autoresizingMask = [.minXMargin]
+        page.addSubview(search)
+        list.searchField = search
+
+        let empty = NSTextField(labelWithString: "No Matching Applications")
+        empty.font = .systemFont(ofSize: 13)
+        empty.textColor = .secondaryLabelColor
+        empty.alignment = .center
+        empty.frame = NSRect(x: 0, y: scroll.frame.midY - 9, width: scroll.frame.width, height: 18)
+        empty.autoresizingMask = [.width, .minYMargin, .maxYMargin]
+        empty.isHidden = true
+        page.addSubview(empty)
+        list.emptyLabel = empty
     }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         Self.preferenceTabs.map { NSToolbarItem.Identifier($0.id) }

@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>HyperCaps</string>
-<key>CFBundleIdentifier</key><string>local.maxvoid.HyperCaps</string>
-<key>CFBundleName</key><string>HyperCaps</string>
-<key>CFBundleDisplayName</key><string>HyperCaps</string>
+<key>CFBundleExecutable</key><string>Clutch</string>
+<key>CFBundleIdentifier</key><string>local.maxvoid.Clutch</string>
+<key>CFBundleName</key><string>Clutch</string>
+<key>CFBundleDisplayName</key><string>Clutch</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>8</string>
 <key>CFBundleShortVersionString</key><string>3.3</string>

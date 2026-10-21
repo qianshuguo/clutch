@@ -43,7 +43,7 @@ extension AppDelegate {
         let events = try CapsReplay.events()
         guard let down = events.first, let up = events.last else { return }
         CapsReplay.post(down)
-        // The release is always posted, even if HyperCaps is disabled meanwhile.
+        // The release is always posted, even if Clutch is disabled meanwhile.
         // Common run-loop modes keep it on time during menus and modal panels.
         let release = Timer(timeInterval: CapsReplay.pressDuration, repeats: false) { _ in
             CapsReplay.post(up)

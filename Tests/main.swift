@@ -554,7 +554,7 @@ expect(KeyCode.lettersAndDigits.count == 36 && KeyCode.isReturn(36) && KeyCode.i
        "derived key tables cover letters, digits, and both Return keys")
 print("PASS: hidden releases, orphan Caps autorepeats, derived key tables")
 
-let suite = "local.maxvoid.HyperCaps.tests"
+let suite = "local.maxvoid.Clutch.tests"
 let testDefaults = UserDefaults(suiteName: suite)!
 testDefaults.removePersistentDomain(forName: suite)
 let missingList = try StoredList.load([FolderEntry].self, forKey: "Folders", description: "folders", defaults: testDefaults)
@@ -634,7 +634,7 @@ expect(defaultWindowKeys.command(for: 123) == .left && defaultWindowKeys.command
 let screen = CGRect(x: 0, y: 25, width: 1440, height: 875)
 let start = CGRect(x: 200, y: 100, width: 800, height: 500)
 func same(_ a: CGRect?, _ b: CGRect) -> Bool { a.map { WindowLayout.same($0, b) } ?? false }
-// ← cycles 1/2 → 2/3 → 1/3 while the window stays where HyperCaps put it.
+// ← cycles 1/2 → 2/3 → 1/3 while the window stays where Clutch put it.
 var memory: WindowMemory? = nil
 var frame = start
 for (fraction, step) in [(CGFloat(1) / 2, 0), (CGFloat(2) / 3, 1), (CGFloat(1) / 3, 2), (CGFloat(1) / 2, 0)] {
@@ -665,7 +665,7 @@ let maximizedMemory = WindowLayout.remember(upTwice, before: tall, after: screen
 expect(maximizedMemory?.unmaximizedFrame == tall, "maximize remembers the frame it left")
 let upThrice = WindowLayout.action(for: .up, current: screen, screen: screen, memory: maximizedMemory)!
 expect(upThrice == .maximizeHeight && same(WindowLayout.frame(for: upThrice, window: screen, screen: screen, restore: start, unmaximized: tall)!, tall),
-       "↑ on a window HyperCaps maximized returns to full height at its previous width")
+       "↑ on a window Clutch maximized returns to full height at its previous width")
 let halfMaximized = WindowLayout.remember(.maximize, before: CGRect(x: 0, y: 25, width: 720, height: 875), after: screen, memory: nil)
 expect(same(WindowLayout.frame(for: .maximizeHeight, window: screen, screen: screen, restore: halfMaximized?.restoreFrame,
                                unmaximized: halfMaximized?.unmaximizedFrame)!, CGRect(x: 0, y: 25, width: 720, height: 875)),
@@ -716,7 +716,7 @@ windowKeys.assign(123, to: .right)
 expect(windowKeys.key(for: .right) == 123 && windowKeys.key(for: .left) == unassignedKey, "taking another action's key leaves it unassigned")
 windowKeys.clear(123)
 expect(windowKeys.command(for: 123) == nil && windowKeys.key(for: .right) == unassignedKey, "clearing a key unassigns its action")
-let windowKeysSuite = "local.maxvoid.HyperCaps.window-tests"
+let windowKeysSuite = "local.maxvoid.Clutch.window-tests"
 let windowKeysDefaults = UserDefaults(suiteName: windowKeysSuite)!
 windowKeysDefaults.removePersistentDomain(forName: windowKeysSuite)
 expect(WindowShortcuts.load(from: windowKeysDefaults) == .defaults, "nothing saved loads the defaults")
@@ -776,6 +776,6 @@ expect(!nothing.applied, "↓ without a restore point previews and applies nothi
 let remembered = WindowMemory(restoreFrame: planStart, lastAction: .leftHalf(step: 0), lastFrame: CGRect(x: 0, y: 25, width: 720, height: 875))
 var continued = WindowPlan(start: remembered.lastFrame, screen: planScreen, memory: remembered)
 continued.apply(.left)
-expect(continued.frame.width == 960, "a window HyperCaps left at 1/2 continues with 2/3")
+expect(continued.frame.width == 960, "a window Clutch left at 1/2 continues with 2/3")
 print("PASS: window preview plans: halves cycle, height/maximize, restore, resize steps, continuation")
 print("PASS: window layout routing, halves, height/maximize, restore, resize, displays")

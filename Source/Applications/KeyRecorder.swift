@@ -12,7 +12,7 @@ final class KeyRecorder: NSButton {
     var onKeys: ((UInt16, UInt16?) -> Bool)?
     // 2 for App List (Caps + M + W), 1 for window actions.
     var maxKeys = 1
-    // False while HyperCaps cannot see Caps (disabled, or no Accessibility access).
+    // False while Clutch cannot see Caps (disabled, or no Accessibility access).
     var capsAvailable: (() -> Bool)?
     private var recordedKeys: [UInt16] = []
     var recordsWithCaps: Bool { onKeys != nil }
@@ -31,7 +31,7 @@ final class KeyRecorder: NSButton {
         title = prompt
     }
     var prompt: String {
-        if capsAvailable?() == false { return "Turn on HyperCaps" }
+        if capsAvailable?() == false { return "Turn on Clutch" }
         return maxKeys > 1 ? "Hold Caps + 1 or 2 keys" : "Hold Caps + a key"
     }
     // Keys arrive here only when Caps is not held: the prompt already says what to do.

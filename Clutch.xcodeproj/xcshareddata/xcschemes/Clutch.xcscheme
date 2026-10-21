@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "000000000000000000000005"
-               BuildableName = "HyperCaps.app"
-               BlueprintName = "HyperCaps"
-               ReferencedContainer = "container:HyperCaps.xcodeproj">
+               BuildableName = "Clutch.app"
+               BlueprintName = "Clutch"
+               ReferencedContainer = "container:Clutch.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -44,9 +44,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "000000000000000000000005"
-            BuildableName = "HyperCaps.app"
-            BlueprintName = "HyperCaps"
-            ReferencedContainer = "container:HyperCaps.xcodeproj">
+            BuildableName = "Clutch.app"
+            BlueprintName = "Clutch"
+            ReferencedContainer = "container:Clutch.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <CommandLineArguments>
@@ -67,9 +67,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "000000000000000000000005"
-            BuildableName = "HyperCaps.app"
-            BlueprintName = "HyperCaps"
-            ReferencedContainer = "container:HyperCaps.xcodeproj">
+            BuildableName = "Clutch.app"
+            BlueprintName = "Clutch"
+            ReferencedContainer = "container:Clutch.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

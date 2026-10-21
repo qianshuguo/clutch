@@ -17,19 +17,20 @@ enum LaunchHUD {
 
 // Two stages at one fixed size.
 // Hint (Caps held): a large icon over the app's name.
-// Confirmation (Caps released, app not running): a smaller icon over "Open?", with
-// "⎋ Cancel" in the bottom-left corner and "↩ Open" in the bottom-right.
+// Confirmation (Caps released, app not running): a smaller icon over the same name,
+// with "⎋ Cancel" in the bottom-left corner and "↩ Open" in the bottom-right.
 final class LaunchHUDView: NSVisualEffectView {
     private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
-    private let openLabel = NSTextField(labelWithString: "Open?")
     private let cancelKey = NSTextField(labelWithString: "⎋ Cancel")
     private let openKey = NSTextField(labelWithString: "↩ Open")
     static let transition: TimeInterval = 0.18
     private static let keyInset: CGFloat = 9
     private static let keyBottom: CGFloat = 9
     private static let returnGlyphOffset: CGFloat = -2
-    private static let labelInset: CGFloat = 12
+    // "Visual Studio Code" at 13 pt is about as wide as a 124 pt label, so it fit in one
+    // window and was cut off in the other. 8 pt leaves headroom for names that long.
+    private static let labelInset: CGFloat = 8
 
     init() {
         super.init(frame: NSRect(origin: .zero, size: LaunchHUD.size))
@@ -45,11 +46,11 @@ final class LaunchHUDView: NSVisualEffectView {
             return true
         }
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        for label in [nameLabel, openLabel] {
-            label.font = .systemFont(ofSize: 13, weight: .medium)
-            label.alignment = .center
-            label.lineBreakMode = .byTruncatingTail
-        }
+        nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nameLabel.alignment = .center
+        nameLabel.lineBreakMode = .byTruncatingTail
+        // Squeeze letter spacing slightly before cutting a name off.
+        nameLabel.allowsDefaultTighteningForTruncation = true
         for key in [cancelKey, openKey] {
             key.font = .systemFont(ofSize: 10)
             key.textColor = .secondaryLabelColor
@@ -75,7 +76,7 @@ final class LaunchHUDView: NSVisualEffectView {
         openKey.frame = NSRect(x: size.width - Self.keyInset - openSize.width,
                                y: Self.keyBottom - max(0, openSize.height - cancelSize.height),
                                width: openSize.width, height: openSize.height)
-        [iconView, nameLabel, openLabel, cancelKey, openKey].forEach { addSubview($0) }
+        [iconView, nameLabel, cancelKey, openKey].forEach { addSubview($0) }
         setConfirming(false, animated: false)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -98,28 +99,16 @@ final class LaunchHUDView: NSVisualEffectView {
         guard animated else {
             iconView.frame = iconFrame
             nameLabel.frame = labelFrame
-            openLabel.frame = labelFrame
-            nameLabel.alphaValue = confirming ? 0 : 1
-            openLabel.alphaValue = confirming ? 1 : 0
             cancelKey.alphaValue = confirming ? 1 : 0
             openKey.alphaValue = confirming ? 1 : 0
             return
         }
-        // The name and "Open?" switch at once, already in their final place, with
-        // Core Animation's implicit actions off so nothing fades or slides. Only the
-        // icon and the key labels animate.
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        nameLabel.frame = labelFrame
-        openLabel.frame = labelFrame
-        nameLabel.alphaValue = confirming ? 0 : 1
-        openLabel.alphaValue = confirming ? 1 : 0
-        CATransaction.commit()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.transition
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             context.allowsImplicitAnimation = true
             self.iconView.animator().frame = iconFrame
+            self.nameLabel.animator().frame = labelFrame
             self.cancelKey.animator().alphaValue = confirming ? 1 : 0
             self.openKey.animator().alphaValue = confirming ? 1 : 0
         }
@@ -164,9 +153,9 @@ final class LaunchConfirmationPanel: NSPanel {
     }
 }
 
-// "Open?" for an app that is not running. It opens as an exact copy of the launch
-// hint shown while Caps was held (same frame, icon and name), then the same window
-// animates to its second stage: "Open?" with ⎋ Cancel / ↩ Open.
+// Confirmation for an app that is not running. It opens as an exact copy of the
+// launch hint shown while Caps was held (same frame, icon and name), then the same
+// window animates to its second stage: smaller icon, same name, ⎋ Cancel / ↩ Open.
 final class LaunchConfirmation: NSObject {
     private let panel = LaunchConfirmationPanel(contentRect: NSRect(origin: .zero, size: LaunchHUD.size),
                                 styleMask: [.borderless], backing: .buffered, defer: false)

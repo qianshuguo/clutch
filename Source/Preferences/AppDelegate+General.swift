@@ -8,7 +8,7 @@ extension AppDelegate {
     }
     var legacyLoginItemExists: Bool { FileManager.default.fileExists(atPath: legacyLoginURL.path) }
     // On macOS 13+, a LaunchAgent left by an earlier macOS 12 setup also launches
-    // HyperCaps at login, so it counts as enabled until it is removed.
+    // Clutch at login, so it counts as enabled until it is removed.
     var loginLaunchEnabled: Bool {
         if #available(macOS 13.0, *) {
             let status = SMAppService.mainApp.status
@@ -37,7 +37,7 @@ extension AppDelegate {
                 // instance at login, which would then open Preferences in the first.
                 if legacyLoginItemExists { try FileManager.default.removeItem(at: legacyLoginURL) }
             } else if sender.state == .on {
-                guard let executable = Bundle.main.executableURL else { throw ToolError(message: "Could not locate HyperCaps.") }
+                guard let executable = Bundle.main.executableURL else { throw ToolError(message: "Could not locate Clutch.") }
                 let plist: [String: Any] = ["Label": "local.maxvoid.HyperKey.login", "ProgramArguments": [executable.path], "RunAtLoad": true]
                 let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
                 try FileManager.default.createDirectory(at: legacyLoginURL.deletingLastPathComponent(), withIntermediateDirectories: true)

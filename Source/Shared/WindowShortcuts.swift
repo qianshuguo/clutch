@@ -8,7 +8,7 @@ func isWindowCloseShortcut(_ event: NSEvent) -> Bool {
 // Focus changes requested by this background (accessory) utility in response to
 // global shortcuts. macOS 14 deprecates "ignoring other apps"; the long-standing
 // calls are kept here unchanged until NSApp.activate()/yieldActivation are verified
-// to bring HyperCaps panels forward reliably from the background.
+// to bring Clutch panels forward reliably from the background.
 extension NSApplication {
     func activateFromBackground() { activate(ignoringOtherApps: true) }
 }

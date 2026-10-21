@@ -96,7 +96,7 @@ for (index, location) in [CGEventTapLocation.cghidEventTap, .cgSessionEventTap].
 let observer = DistributedNotificationCenter.default().addObserver(
     forName: Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
     object: nil, queue: .main) { _ in log("input-source-changed source=\(inputSourceID())") }
-log("Recording for 90 seconds. Compare HyperCaps Folders rename with HyperCaps disabled, then enabled. Ctrl-C stops early.")
+log("Recording for 90 seconds. Compare Clutch Folders rename with Clutch disabled, then enabled. Ctrl-C stops early.")
 log("initial source=\(inputSourceID())")
 let timer = Timer.scheduledTimer(withTimeInterval: 90, repeats: false) { _ in CFRunLoopStop(CFRunLoopGetMain()) }
 CFRunLoopRun()

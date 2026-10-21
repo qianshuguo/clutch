@@ -8,8 +8,12 @@ struct ApplicationWindowOrder<Window> {
     private var processID: pid_t?
     private var windows: [Window] = []
 
+    // `available` is front to back, as Accessibility lists it. With `frontWhenUnfocused`,
+    // focus outside every listed window (Finder's desktop) returns the frontmost one;
+    // otherwise such focus never selects an unrelated window.
     mutating func next(processID: pid_t, available: [Window], focused: Window?,
-                       cycle: Bool, equals: (Window, Window) -> Bool) -> Window? {
+                       cycle: Bool, frontWhenUnfocused: Bool = false,
+                       equals: (Window, Window) -> Bool) -> Window? {
         if self.processID != processID || !cycle {
             windows = available
             self.processID = processID
@@ -19,17 +23,22 @@ struct ApplicationWindowOrder<Window> {
                 windows.append(window)
             }
         }
-        guard cycle, windows.count > 1, let focused = focused,
-              let index = windows.firstIndex(where: { equals($0, focused) }) else { return nil }
+        guard cycle else { return nil }
+        guard let focused = focused, let index = windows.firstIndex(where: { equals($0, focused) }) else {
+            return frontWhenUnfocused ? available.first : nil
+        }
+        guard windows.count > 1 else { return nil }
         return windows[(index + 1) % windows.count]
     }
 }
 
 final class ApplicationWindowCycle {
+    // Finder's desktop takes focus inside Finder but is not listed among its windows.
+    static let finderBundleID = "com.apple.finder"
     // Each Accessibility call can wait up to the messaging timeout for a busy app.
     // Run them off the main thread, which also services the keyboard event tap;
     // the serial queue keeps rapid presses in order and owns `order`.
-    private let queue = DispatchQueue(label: "local.maxvoid.HyperCaps.window-cycle", qos: .userInteractive)
+    private let queue = DispatchQueue(label: "local.maxvoid.Clutch.window-cycle", qos: .userInteractive)
     private var order = ApplicationWindowOrder<AXUIElement>()
 
     // `noWindows` runs on the main thread when the app reports no standard,
@@ -37,15 +46,19 @@ final class ApplicationWindowCycle {
     // Activation alone then only switches the menu bar, so the caller reopens it.
     func advance(in app: NSRunningApplication, cycle: Bool, noWindows: @escaping () -> Void) {
         let processID = app.processIdentifier
+        // From Finder's desktop, the shortcut returns to the frontmost Finder window.
+        let frontWhenUnfocused = app.bundleIdentifier == Self.finderBundleID
         queue.async { [self] in
-            if !advance(processID: processID, cycle: cycle) { DispatchQueue.main.async(execute: noWindows) }
+            if !advance(processID: processID, cycle: cycle, frontWhenUnfocused: frontWhenUnfocused) {
+                DispatchQueue.main.async(execute: noWindows)
+            }
         }
     }
 
     // Returns false only when Accessibility answered and listed no usable window;
     // a timeout or error returns true so a busy app is never sent a reopen.
     @discardableResult
-    private func advance(processID: pid_t, cycle: Bool) -> Bool {
+    private func advance(processID: pid_t, cycle: Bool, frontWhenUnfocused: Bool) -> Bool {
         let application = AXUIElementCreateApplication(processID)
         AXUIElementSetMessagingTimeout(application, 0.25)
         func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
@@ -72,8 +85,8 @@ final class ApplicationWindowCycle {
         } else {
             focused = nil
         }
-        guard let next = order.next(processID: processID, available: available,
-                                    focused: focused, cycle: cycle, equals: { CFEqual($0, $1) }) else { return true }
+        guard let next = order.next(processID: processID, available: available, focused: focused, cycle: cycle,
+                                    frontWhenUnfocused: frontWhenUnfocused, equals: { CFEqual($0, $1) }) else { return true }
         guard AXUIElementPerformAction(next, kAXRaiseAction as CFString) == .success else { return true }
         AXUIElementSetAttributeValue(next, kAXMainAttribute as CFString, kCFBooleanTrue)
         AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, next)
@@ -84,7 +97,7 @@ final class ApplicationWindowCycle {
 // While Caps is held, the app that releasing Caps would open: its icon and name in a
 // small HUD at the center of the screen. It never takes focus or mouse events.
 // Releasing Caps hides it, unless the app is not running: then the launch
-// confirmation takes its place and animates to "Open?" in the same window.
+// confirmation takes its place and animates to its second stage in the same window.
 final class LaunchHintOverlay {
     // The app path last requested by the key handler, set synchronously in the tap
     // callback so each key press compares against it without waiting for the UI.
@@ -270,7 +283,7 @@ extension AppDelegate {
     }
     func saveBindings() {
         if let data = try? JSONEncoder().encode(bindings) { UserDefaults.standard.set(data, forKey: DefaultsKey.shortcuts) }
-        table?.reloadData()
+        applicationList?.reload()
     }
     @objc func addBinding() {
         let panel = NSOpenPanel(); panel.title = "Choose an Application"
@@ -280,25 +293,32 @@ extension AppDelegate {
             guard let self = self, response == .OK, let url = panel.url, let bundle = Bundle(url:url), bundle.bundleIdentifier != nil else { return }
             let name = (bundle.object(forInfoDictionaryKey:"CFBundleDisplayName") as? String) ?? url.deletingPathExtension().lastPathComponent
             if let index = self.bindings.firstIndex(where: { $0.path == url.path || $0.bundleID == bundle.bundleIdentifier }) {
-                self.table?.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-                self.table?.scrollRowToVisible(index)
+                self.applicationList?.reveal(bindingAt: index)
                 return
             }
             self.bindings.append(AppShortcut(key:unassignedKey,name:name,path:url.path,bundleID:bundle.bundleIdentifier))
             self.bindings.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             self.saveBindings()
             if let index = self.bindings.firstIndex(where: { $0.path == url.path }) {
-                self.table?.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-                self.table?.scrollRowToVisible(index)
+                self.applicationList?.reveal(bindingAt: index)
             }
             self.setStatus("Added \(name). Click its shortcut field to assign a key.")
         }
     }
+    // Rows may be filtered by the search field, so selected rows are mapped back to
+    // their applications. The row now at the first removed position is selected.
     @objc func removeBinding() {
-        guard let table = table else { return }
-        guard let selection = ListSelection.remove(table.selectedRowIndexes, from: &bindings) else { return }
+        guard let list = applicationList, let firstRow = list.table.selectedRowIndexes.first else { return }
+        guard ListSelection.remove(list.selectedBindingIndices, from: &bindings) != nil else { return }
         saveBindings()
-        table.selectRowIndexes(selection, byExtendingSelection: false)
+        let rows = list.table.numberOfRows
+        list.table.selectRowIndexes(rows == 0 ? IndexSet() : IndexSet(integer: min(firstRow, rows - 1)),
+                                    byExtendingSelection: false)
+    }
+    // Command-F on the App List page.
+    @objc func findApplication() {
+        guard window?.isVisible == true, Self.preferenceTabs[selectedPage].id == "apps" else { NSSound.beep(); return }
+        applicationList?.focusSearch()
     }
     // Where the app is now (its saved path, or where its bundle ID moved) and its
     // running instance, if any.

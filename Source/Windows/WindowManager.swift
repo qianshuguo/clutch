@@ -6,7 +6,7 @@ import ApplicationServices
 // Accessibility calls, which can block on a busy app, run on a serial queue
 // that also owns the per-window memory used by repeats and Restore.
 final class WindowManager {
-    private let queue = DispatchQueue(label: "local.maxvoid.HyperCaps.window-layout", qos: .userInteractive)
+    private let queue = DispatchQueue(label: "local.maxvoid.Clutch.window-layout", qos: .userInteractive)
     private var memories: [(window: AXUIElement, memory: WindowMemory)] = []
     private static let memoryLimit = 64
     private static let enhancedUserInterface = "AXEnhancedUserInterface" as CFString

@@ -17,7 +17,7 @@ extension AppDelegate {
     func start() {
         guard tap == nil, !starting else { return }
         guard AXIsProcessTrusted() else {
-            setStatus("Waiting for Accessibility access. HyperCaps will enable automatically.")
+            setStatus("Waiting for Accessibility access. Clutch will enable automatically.")
             if permissionTimer == nil {
                 permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
                     guard let self = self else { return }
@@ -37,7 +37,7 @@ extension AppDelegate {
                 guard let context = context else { return Unmanaged.passUnretained(event) }
                 return Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue().handle(type, event)
             }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-            failKeyboard(status: "Could not monitor the keyboard. Allow Accessibility access and reopen HyperCaps.")
+            failKeyboard(status: "Could not monitor the keyboard. Allow Accessibility access and reopen Clutch.")
             updateToggleMenuTitle("Retry Enabling")
             return
         }
@@ -121,7 +121,7 @@ extension AppDelegate {
         case .tapDisabledByUserInput:
             wantsEnabled = false
             afterKeyEvent { [weak self] in
-                self?.failKeyboard(status: "Keyboard monitoring stopped. Caps Lock was restored. Enable HyperCaps to retry.")
+                self?.failKeyboard(status: "Keyboard monitoring stopped. Caps Lock was restored. Enable Clutch to retry.")
             }
             return Unmanaged.passUnretained(event)
         default:

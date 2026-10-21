@@ -16,14 +16,29 @@ extension AppDelegate {
             DistributedNotificationCenter.default().postNotificationName(reopenNotification, object: nil, userInfo: nil, deliverImmediately: true)
             NSApp.terminate(nil); return
         }
+        // The former HyperCaps/HyperKey builds have other bundle IDs, so the check
+        // above misses them. Both would remap Caps Lock, so ask to quit them first.
+        if let legacy = NSRunningApplication.runningApplications(withBundleIdentifier: "local.maxvoid.HyperCaps").first
+            ?? NSRunningApplication.runningApplications(withBundleIdentifier: "local.maxvoid.HyperKey").first {
+            let alert = NSAlert()
+            alert.messageText = "Quit \(legacy.localizedName ?? "HyperCaps") First"
+            alert.informativeText = "Clutch replaces \(legacy.localizedName ?? "HyperCaps"). Quit the old app, then open Clutch again."
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+            NSApp.terminate(nil); return
+        }
         ownsLifecycle = true
-        // Copy the former application's settings once when adopting the new identity.
+        // Copy the former applications' settings once when adopting the new identity.
+        // Older names come first, so newer settings and Clutch's own win.
         let defaults = UserDefaults.standard
-        if let id = Bundle.main.bundleIdentifier, id == "local.maxvoid.HyperCaps",
-           !defaults.bool(forKey: DefaultsKey.migratedHyperKeyPreferences) {
-            var preferences = defaults.persistentDomain(forName: "local.maxvoid.HyperKey") ?? [:]
-            preferences.merge(defaults.persistentDomain(forName: id) ?? [:]) { _, current in current }
-            preferences[DefaultsKey.migratedHyperKeyPreferences] = true
+        if let id = Bundle.main.bundleIdentifier, id == "local.maxvoid.Clutch",
+           !defaults.bool(forKey: DefaultsKey.migratedLegacyPreferences) {
+            var preferences: [String: Any] = [:]
+            for legacy in ["local.maxvoid.HyperKey", "local.maxvoid.HyperCaps", id] {
+                preferences.merge(defaults.persistentDomain(forName: legacy) ?? [:]) { _, newer in newer }
+            }
+            preferences.removeValue(forKey: "MigratedHyperKeyPreferences")
+            preferences[DefaultsKey.migratedLegacyPreferences] = true
             defaults.setPersistentDomain(preferences, forName: id)
         }
         var loadErrors: [Error] = []
@@ -58,7 +73,7 @@ extension AppDelegate {
         setStatus(error.localizedDescription)
         let alert = NSAlert()
         alert.messageText = "Caps Lock could not be restored"
-        alert.informativeText = error.localizedDescription + "\n\nIf you quit anyway, Caps Lock stays mapped to F18 until HyperCaps restores it on its next launch or the Mac restarts."
+        alert.informativeText = error.localizedDescription + "\n\nIf you quit anyway, Caps Lock stays mapped to F18 until Clutch restores it on its next launch or the Mac restarts."
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Quit Anyway")
         NSApp.activateFromBackground()

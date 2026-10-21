@@ -7,7 +7,7 @@ enum DefaultsKey {
     static let folders = "Folders"
     static let hideStatusBarIcon = "HideStatusBarIcon"
     static let capsMappingRecovery = "CapsMappingRecovery"
-    static let migratedHyperKeyPreferences = "MigratedHyperKeyPreferences"
+    static let migratedLegacyPreferences = "MigratedLegacyPreferences"
 }
 
 enum StoredList {
@@ -22,7 +22,7 @@ enum StoredList {
             let backupKey = key + ".unreadable"
             defaults.set(data, forKey: backupKey)
             defaults.removeObject(forKey: key)
-            throw ToolError(message: "Saved \(description) could not be read, so HyperCaps started without them. The original data was kept in its preferences under “\(backupKey)”.")
+            throw ToolError(message: "Saved \(description) could not be read, so Clutch started without them. The original data was kept in its preferences under “\(backupKey)”.")
         }
     }
 }

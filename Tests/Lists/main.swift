@@ -26,7 +26,20 @@ expect(nextWindow(202, [10, 12, 11], 10, cycle: false) == nil, "reactivation ref
 expect(nextWindow(202, [11, 10, 12], 10) == 12, "refreshed ordering is retained")
 expect(nextWindow(202, [10, 11], 99) == nil, "unknown focused window does not select an unrelated one")
 expect(nextWindow(202, [10, 11], nil) == nil, "missing focused window is harmless")
-print("PASS: app-independent window cycling, stable order, wraparound, window changes, app changes")
+// Finder: focus on the desktop (not a listed window) returns to the frontmost window.
+var finderOrder = ApplicationWindowOrder<Int>()
+func nextFinderWindow(_ available: [Int], _ focused: Int?, cycle: Bool = true) -> Int? {
+    finderOrder.next(processID: 404, available: available, focused: focused, cycle: cycle,
+                     frontWhenUnfocused: true, equals: ==)
+}
+expect(nextFinderWindow([30], nil, cycle: false) == nil, "Finder's first activation does not advance")
+expect(nextFinderWindow([30], nil) == 30, "from the desktop, the only Finder window is raised")
+expect(nextFinderWindow([30], 30) == nil, "a single focused Finder window stays focused, never the desktop")
+expect(nextFinderWindow([31, 30], 99) == 31, "from the desktop, the frontmost of several windows is raised")
+expect(nextFinderWindow([31, 30], 31) == 30, "Finder windows then cycle as usual")
+expect(nextFinderWindow([30, 31], 30) == 31, "and keep their stable order")
+expect(nextFinderWindow([], nil) == nil, "no Finder windows is harmless")
+print("PASS: app-independent window cycling, stable order, wraparound, window changes, app changes, Finder desktop")
 
 // Construct views without running AppDelegate's startup or touching saved preferences.
 _ = NSApplication.shared
@@ -113,8 +126,8 @@ expect(comboCell.subviews.compactMap { $0 as? KeyRecorder }.first?.title == "Cap
 expect(owner.assignShortcut(3, to: owner.bindings[0], recorder: recorder) && owner.bindings[0].secondKey == nil, "assigning one key clears the second key")
 // Recording as used: Caps held, T then H, Caps released.
 recorder.recording = true
-expect(recorder.prompt == (owner.tap == nil ? "Turn on HyperCaps" : "Hold Caps + 1 or 2 keys"), "the prompt depends on whether HyperCaps can see Caps")
-recorder.capsAvailable = { true } // As if HyperCaps were enabled.
+expect(recorder.prompt == (owner.tap == nil ? "Turn on Clutch" : "Hold Caps + 1 or 2 keys"), "the prompt depends on whether Clutch can see Caps")
+recorder.capsAvailable = { true } // As if Clutch were enabled.
 expect(recorder.prompt == "Hold Caps + 1 or 2 keys", "App List asks for Caps + 1 or 2 keys")
 recorder.capsPressed()
 expect(recorder.title == "Caps + …", "pressing Caps shows the field is listening")
@@ -250,3 +263,55 @@ expect(windowOwner.windowShortcuts == .defaults && windowRecorder(centerRow)?.ti
 if let data = savedWindowKeys { UserDefaults.standard.set(data, forKey: WindowShortcuts.defaultsKey) }
 else { UserDefaults.standard.removeObject(forKey: WindowShortcuts.defaultsKey) }
 print("PASS: window shortcut list")
+
+// App List search matches application names only.
+let savedShortcuts = UserDefaults.standard.data(forKey: DefaultsKey.shortcuts)
+let searchOwner = AppDelegate()
+searchOwner.bindings = [AppShortcut(key: 46, name: "Messages", path: "/messages", bundleID: nil),
+                        AppShortcut(key: 46, name: "Microsoft Word", path: "/word", bundleID: nil, secondKey: 13),
+                        AppShortcut(key: 13, name: "WeChat", path: "/wechat", bundleID: nil),
+                        AppShortcut(key: unassignedKey, name: "Stickies", path: "/stickies", bundleID: nil)]
+let searchList = ApplicationListController(owner: searchOwner)
+searchOwner.applicationList = searchList
+searchOwner.configureList(searchList.table, width: AppDelegate.preferenceSize.width, columnID: "app")
+searchList.reload()
+func shownNames() -> [String] { searchList.visibleIndices.map { searchOwner.bindings[$0].name } }
+expect(shownNames().count == 4 && searchList.table.numberOfRows == 4, "an empty search shows every application")
+searchList.setFilter("CHAT")
+expect(shownNames() == ["WeChat"] && searchList.table.numberOfRows == 1, "names match anywhere, ignoring case")
+searchList.setFilter(" word ")
+expect(shownNames() == ["Microsoft Word"], "surrounding spaces are ignored")
+for query in ["M W", "Caps + M", "mw"] {
+    searchList.setFilter(query)
+    expect(shownNames().isEmpty, "\"\(query)\" does not search shortcuts")
+}
+searchList.setFilter("zzz")
+expect(searchList.table.numberOfRows == 0, "no match shows no rows")
+let nameColumn = searchList.table.tableColumns[0], shortcutColumn = searchList.table.tableColumns[1]
+searchList.setFilter("w")
+expect(shownNames() == ["Microsoft Word", "WeChat"], "a filtered list keeps name order")
+expect(searchList.tableView(searchList.table, typeSelectStringFor: nameColumn, row: 1) == "WeChat"
+       && searchList.tableView(searchList.table, typeSelectStringFor: nil, row: 1) == "WeChat",
+       "type selection uses the names of the rows shown")
+expect(searchList.tableView(searchList.table, typeSelectStringFor: shortcutColumn, row: 1) == nil,
+       "shortcut fields take no part in type selection")
+let filteredCell = searchList.tableView(searchList.table, viewFor: nameColumn, row: 1)!
+expect(filteredCell.subviews.compactMap { ($0 as? NSTextField)?.stringValue } == ["WeChat"], "filtered rows show their own application")
+searchList.table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+searchList.setFilter("word")
+expect(searchList.table.selectedRowIndexes == IndexSet(integer: 0) && shownNames() == ["Microsoft Word"],
+       "the selection follows its application when the search changes")
+searchList.setFilter("w")
+searchList.table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+searchOwner.removeBinding()
+expect(searchOwner.bindings.map { $0.name } == ["Messages", "Microsoft Word", "Stickies"],
+       "removing while filtered removes the selected row's application")
+expect(shownNames() == ["Microsoft Word"] && searchList.table.selectedRowIndexes == IndexSet(integer: 0),
+       "after removal the nearest remaining row is selected")
+searchList.setFilter("w")
+searchList.reveal(bindingAt: 2)
+expect(searchList.filter.isEmpty && searchList.table.selectedRowIndexes == IndexSet(integer: 2),
+       "revealing a hidden application clears the search")
+if let data = savedShortcuts { UserDefaults.standard.set(data, forKey: DefaultsKey.shortcuts) }
+else { UserDefaults.standard.removeObject(forKey: DefaultsKey.shortcuts) }
+print("PASS: App List search, type selection, filtered removal")

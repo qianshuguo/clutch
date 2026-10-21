@@ -106,7 +106,7 @@ extension AppDelegate {
             ("Holding Caps", "Preview; release Caps to apply"),
             ("Left / Right Half again", "Cycle ½ → ⅔ → ⅓"),
             ("Fill Height again", "Full height ⇄ full screen"),
-            ("Restore", "Size before HyperCaps moved it"),
+            ("Restore", "Size before Clutch moved it"),
             ("Hover an action", "Full description")
         ], to: content, trailing: button.frame.minX - 8)
     }
