@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 func expect(_ value: Bool, _ message: String) { if !value { fatalError(message) } }
 var state = KeyboardState()
 func capsDown() { _ = state.route(key: 79, down: true, repeated: false, bound: false) }

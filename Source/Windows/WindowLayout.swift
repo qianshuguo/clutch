@@ -1,7 +1,10 @@
 import Foundation
+// Newer SDKs no longer expose CGRect geometry (minX, width, Equatable, …)
+// through Foundation alone.
+import CoreGraphics
 
 // Caps + arrow / − / = / slash window layouts, modelled on Rectangle's defaults.
-// Foundation-only, so the pure keyboard tests can compile it. All rects use
+// Foundation and CoreGraphics only (no AppKit), so the pure keyboard tests can compile it. All rects use
 // Accessibility coordinates: origin at the top-left of the primary display,
 // y growing downward.
 enum WindowCommand: String, CaseIterable {
