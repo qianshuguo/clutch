@@ -5,6 +5,13 @@ struct FolderEntry: Codable {
     var path: String
 }
 
+extension FileManager {
+    func isDirectory(atPath path: String) -> Bool {
+        var directory: ObjCBool = false
+        return fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
+    }
+}
+
 // Drop positions are insertion boundaries in the original list.
 enum FolderOrder {
     static func move(_ folders: inout [FolderEntry], paths: [String], to boundary: Int) -> IndexSet? {

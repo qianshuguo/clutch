@@ -9,7 +9,6 @@ enum KeyCode {
     static let returnKey: UInt16 = 36
     static let space: UInt16 = 49
     static let escape: UInt16 = 53
-    static let capsLock: UInt16 = 57
     static let keypadEnter: UInt16 = 76
     static let hyper: UInt16 = 79 // F18
     // Arrows, Home, End, Page Up, Page Down.

@@ -1,6 +1,27 @@
 import Cocoa
 import ApplicationServices
 
+// Accessibility reads shared by window cycling (App List) and window layout. Each
+// call can wait up to the messaging timeout for a busy app, so callers run them off
+// the main thread, which also services the keyboard event tap.
+enum AXQuery {
+    static func application(_ processID: pid_t) -> AXUIElement {
+        let application = AXUIElementCreateApplication(processID)
+        AXUIElementSetMessagingTimeout(application, 0.25)
+        return application
+    }
+    static func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+        var result: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &result) == .success else { return nil }
+        return result
+    }
+    // An attribute that holds a UI element (such as a window); nil for anything else.
+    static func element(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
+        guard let found = value(element, attribute), CFGetTypeID(found) == AXUIElementGetTypeID() else { return nil }
+        return (found as! AXUIElement)
+    }
+}
+
 // Moves and resizes the focused window of the frontmost application through
 // Accessibility. AppKit screen geometry is captured on the main thread; the
 // Accessibility calls, which can block on a busy app, run on a serial queue
@@ -51,10 +72,9 @@ final class WindowManager {
     }
 
     private func makeTarget(processID: pid_t, screens: [Screen]) -> Target? {
-        let application = AXUIElementCreateApplication(processID)
-        AXUIElementSetMessagingTimeout(application, 0.25)
+        let application = AXQuery.application(processID)
         guard let window = Self.focusedWindow(of: application),
-              (Self.value(window, "AXFullScreen") as? Bool) != true,
+              (AXQuery.value(window, "AXFullScreen") as? Bool) != true,
               let current = Self.frame(of: window) else { return nil }
         let memory = memories.first { CFEqual($0.window, window) }?.memory
         let screen = screens[WindowLayout.screenIndex(for: current, screens: screens.map { $0.frame })]
@@ -62,34 +82,24 @@ final class WindowManager {
                       plan: WindowPlan(start: current, screen: screen.visible, memory: memory))
     }
 
-    // NSScreen uses bottom-left coordinates; Accessibility uses top-left of the primary display.
+    // NSScreen uses bottom-left coordinates; Accessibility uses top-left of the primary
+    // display. The same flip converts either way.
+    static func flip(_ rect: CGRect, primaryTop top: CGFloat) -> CGRect {
+        CGRect(x: rect.minX, y: top - rect.maxY, width: rect.width, height: rect.height)
+    }
     private static func screens() -> [Screen] {
         guard let primary = NSScreen.screens.first else { return [] }
         let top = primary.frame.maxY
-        func flip(_ rect: NSRect) -> CGRect {
-            CGRect(x: rect.minX, y: top - rect.maxY, width: rect.width, height: rect.height)
-        }
-        return NSScreen.screens.map { Screen(frame: flip($0.frame), visible: flip($0.visibleFrame)) }
-    }
-
-    private static func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
-        var result: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &result) == .success else { return nil }
-        return result
+        return NSScreen.screens.map { Screen(frame: flip($0.frame, primaryTop: top), visible: flip($0.visibleFrame, primaryTop: top)) }
     }
 
     private static func focusedWindow(of application: AXUIElement) -> AXUIElement? {
-        for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
-            if let window = value(application, attribute), CFGetTypeID(window) == AXUIElementGetTypeID() {
-                return (window as! AXUIElement)
-            }
-        }
-        return nil
+        AXQuery.element(application, kAXFocusedWindowAttribute) ?? AXQuery.element(application, kAXMainWindowAttribute)
     }
 
     private static func frame(of window: AXUIElement) -> CGRect? {
-        guard let positionValue = value(window, kAXPositionAttribute), CFGetTypeID(positionValue) == AXValueGetTypeID(),
-              let sizeValue = value(window, kAXSizeAttribute), CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
+        guard let positionValue = AXQuery.value(window, kAXPositionAttribute), CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              let sizeValue = AXQuery.value(window, kAXSizeAttribute), CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
         var position = CGPoint.zero
         var size = CGSize.zero
         guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
@@ -106,7 +116,7 @@ final class WindowManager {
         guard !writes.isEmpty else { return current }
         // Apps with enhanced Accessibility UI (Chromium, Electron) animate and drop
         // frame changes; turn it off while resizing.
-        let enhanced = (value(application, enhancedUserInterface as String) as? Bool) == true
+        let enhanced = (AXQuery.value(application, enhancedUserInterface as String) as? Bool) == true
         if enhanced { AXUIElementSetAttributeValue(application, enhancedUserInterface, kCFBooleanFalse) }
         defer { if enhanced { AXUIElementSetAttributeValue(application, enhancedUserInterface, kCFBooleanTrue) } }
         for write in writes { apply(write, frame, to: window) }
@@ -147,7 +157,7 @@ final class WindowPreviewOverlay {
     // `frame` uses Accessibility coordinates (top-left of the primary display).
     func show(_ frame: CGRect) {
         guard let primary = NSScreen.screens.first else { return }
-        let rect = NSRect(x: frame.minX, y: primary.frame.maxY - frame.maxY, width: frame.width, height: frame.height)
+        let rect = WindowManager.flip(frame, primaryTop: primary.frame.maxY)
         let panel = self.panel ?? makePanel()
         self.panel = panel
         panel.setFrame(rect, display: true)

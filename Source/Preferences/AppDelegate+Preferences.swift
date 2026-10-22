@@ -14,7 +14,6 @@ extension AppDelegate: NSToolbarDelegate {
         window.backgroundColor = .windowBackgroundColor
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
-        window.hasShadow = true
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
@@ -25,8 +24,7 @@ extension AppDelegate: NSToolbarDelegate {
         window.toolbar = toolbar
         window.toolbarStyle = .preference
         window.contentView = makePreferencesContent()
-        window.contentMinSize = Self.preferenceSize
-        window.contentMaxSize = Self.preferenceSize
+        // Adding the toolbar can change the frame; keep the content at its fixed size.
         window.setContentSize(Self.preferenceSize)
     }
     // Shared by the running app and Xcode Canvas. No keyboard services start here.

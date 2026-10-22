@@ -123,8 +123,8 @@ final class ApplicationListController: NSObject, NSTableViewDataSource, NSTableV
             cell.addSubview(name)
             return cell
         }
-        let recorder = owner.addShortcutRecorder(to: cell, width: cellWidth, key: binding.key, table: tableView)
-        recorder.title = shortcutTitle(binding.key, binding.secondKey)
+        let recorder = owner.addShortcutRecorder(to: cell, width: cellWidth, key: binding.key,
+                                                 secondKey: binding.secondKey, table: tableView)
         recorder.onStart = { [weak self] in
             self?.owner.state.cancelGesture()
             self?.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)

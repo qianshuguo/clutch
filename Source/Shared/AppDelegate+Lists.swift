@@ -41,7 +41,7 @@ extension AppDelegate {
     // Rows are rebuilt on every reload; icon lookups hit Launch Services and the disk.
     private static let listIcons = NSCache<NSString, NSImage>()
     func makeListIcon(path: String) -> NSImageView {
-        let icon = NSImageView(frame: Self.listIconFrame.offsetBy(dx: ListGeometry.leadingInset - Self.listIconFrame.minX, dy: 0))
+        let icon = NSImageView(frame: Self.listIconFrame)
         icon.imageScaling = .scaleProportionallyUpOrDown
         if let cached = Self.listIcons.object(forKey: path as NSString) {
             icon.image = cached
@@ -53,7 +53,7 @@ extension AppDelegate {
         return icon
     }
     func configureListName(_ name: NSTextField, width: CGFloat) {
-        name.frame = Self.listNameFrame.offsetBy(dx: ListGeometry.leadingInset - Self.listIconFrame.minX, dy: 0)
+        name.frame = Self.listNameFrame
         name.frame.size.width = max(0, width - name.frame.minX - 6)
         name.autoresizingMask = [.width]
         name.font = .systemFont(ofSize: 13)
@@ -61,7 +61,8 @@ extension AppDelegate {
     }
     // One clickable field showing the whole shortcut (“Caps + M + W”), right-aligned
     // in a list's shortcut column.
-    func addShortcutRecorder(to cell: NSView, width: CGFloat, key: UInt16, table: NSTableView) -> KeyRecorder {
+    func addShortcutRecorder(to cell: NSView, width: CGFloat, key: UInt16, secondKey: UInt16? = nil,
+                             table: NSTableView) -> KeyRecorder {
         let shortcutX = ListGeometry.shortcutOrigin(in: NSRect(x: 0, y: 0, width: width, height: 0))
         let recorder = KeyRecorder(frame: NSRect(x: shortcutX, y: 3, width: ListGeometry.shortcutRecorderWidth, height: 24))
         recorder.selectionTable = table
@@ -71,7 +72,7 @@ extension AppDelegate {
         recorder.appearance = NSAppearance(named: .aqua)
         recorder.controlSize = .small
         recorder.font = .systemFont(ofSize: 12)
-        recorder.title = shortcutTitle(key, nil)
+        recorder.title = shortcutTitle(key, secondKey)
         recorder.capsAvailable = { [weak self] in self?.tap != nil }
         cell.addSubview(recorder)
         return recorder
@@ -108,12 +109,16 @@ extension AppDelegate {
     }
     func addListControls(to content: NSView, width: CGFloat, leadingInset: CGFloat = 0,
                          add: @escaping () -> Void, remove: @escaping () -> Void, itemName: String) {
+        addListBottomDivider(to: content, width: width)
+        content.addSubview(makeListButton(symbol: "plus", x: 8 + leadingInset, action: add, tip: "Add \(itemName)"))
+        content.addSubview(makeListButton(symbol: "minus", x: 38 + leadingInset, action: remove, tip: "Remove \(itemName)"))
+    }
+    // The rule above a list's 32 pt bottom bar.
+    func addListBottomDivider(to content: NSView, width: CGFloat) {
         let divider = NSBox(frame: NSRect(x: 0, y: 32, width: width, height: 1))
         divider.boxType = .separator
         divider.autoresizingMask = [.width]
         content.addSubview(divider)
-        content.addSubview(makeListButton(symbol: "plus", x: 8 + leadingInset, action: add, tip: "Add \(itemName)"))
-        content.addSubview(makeListButton(symbol: "minus", x: 38 + leadingInset, action: remove, tip: "Remove \(itemName)"))
     }
     // A "?" in a list's bottom bar, right-aligned at `trailing`, explaining the page's feature.
     @discardableResult

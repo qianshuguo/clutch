@@ -70,10 +70,9 @@ enum WindowCommand: String, CaseIterable {
 }
 
 // Caps + key for each window command, edited on the Windows page of Preferences.
-// Saved as JSON {command: key code} under "WindowShortcuts"; unassigned is `unassignedKey`.
+// Saved as JSON {command: key code} under DefaultsKey.windowShortcuts; unassigned is `unassignedKey`.
 struct WindowShortcuts: Equatable {
     private var keys: [WindowCommand: UInt16]
-    static let defaultsKey = "WindowShortcuts"
     static let defaults = WindowShortcuts(keys: Dictionary(uniqueKeysWithValues: WindowCommand.allCases.map { ($0, $0.defaultKey) }))
 
     private init(keys: [WindowCommand: UInt16]) { self.keys = keys }
@@ -95,7 +94,7 @@ struct WindowShortcuts: Equatable {
     // Commands missing from a save keep their defaults; unreadable data loads the defaults.
     static func load(from defaults: UserDefaults = .standard) -> WindowShortcuts {
         var result = Self.defaults
-        guard let data = defaults.data(forKey: defaultsKey),
+        guard let data = defaults.data(forKey: DefaultsKey.windowShortcuts),
               let stored = try? JSONDecoder().decode([String: UInt16].self, from: data) else { return result }
         for command in WindowCommand.allCases {
             if let key = stored[command.rawValue] { result.keys[command] = key }
@@ -110,7 +109,7 @@ struct WindowShortcuts: Equatable {
     }
     func save(to defaults: UserDefaults = .standard) {
         let stored = Dictionary(uniqueKeysWithValues: WindowCommand.allCases.map { ($0.rawValue, key(for: $0)) })
-        if let data = try? JSONEncoder().encode(stored) { defaults.set(data, forKey: Self.defaultsKey) }
+        if let data = try? JSONEncoder().encode(stored) { defaults.set(data, forKey: DefaultsKey.windowShortcuts) }
     }
 }
 

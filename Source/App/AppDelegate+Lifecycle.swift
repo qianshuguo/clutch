@@ -23,7 +23,7 @@ extension AppDelegate {
             let alert = NSAlert()
             alert.messageText = "Quit \(legacy.localizedName ?? "HyperCaps") First"
             alert.informativeText = "Clutch replaces \(legacy.localizedName ?? "HyperCaps"). Quit the old app, then open Clutch again."
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activateFromBackground()
             alert.runModal()
             NSApp.terminate(nil); return
         }

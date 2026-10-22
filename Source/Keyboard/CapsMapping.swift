@@ -57,10 +57,9 @@ final class CapsMapping {
         guard let data = defaults.data(forKey: recoveryKey) else { return }
         let previous = try JSONDecoder().decode([[String: UInt64]].self, from: data)
         let current = try read()
-        if current.contains(where: { $0[MappingPolicy.src] == MappingPolicy.caps && $0[MappingPolicy.dst] == MappingPolicy.f18 }) {
-            let updated = MappingPolicy.restore(current, previous: previous)
-            try write(updated)
-        }
+        // Unchanged when Clutch's Caps → F18 entry is already gone.
+        let updated = MappingPolicy.restore(current, previous: previous)
+        if updated != current { try write(updated) }
         defaults.removeObject(forKey: recoveryKey)
     }
 }

@@ -15,4 +15,4 @@ done
 #   CLUTCH_SIGN_IDENTITY="Clutch Local" ./build.command
 identity="${CLUTCH_SIGN_IDENTITY:--}"
 /usr/bin/codesign --force --sign "$identity" --identifier local.maxvoid.Clutch Clutch.app
-print "已构建：$PWD/Clutch.app"
+print "BUILT: $PWD/Clutch.app"

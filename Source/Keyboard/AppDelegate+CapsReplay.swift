@@ -3,6 +3,11 @@ import IOKit.hidsystem
 
 enum CapsReplay {
     static let marker: Int64 = 0x4879706572436170
+    // A replayed short press: macOS switches input sources (or, if Caps Lock happens to
+    // be on, turns it off). Long enough to look like a real tap (a zero-length press
+    // made Electron apps switch the input source and switch it back), far below a
+    // long press. Clutch never turns Caps Lock on: disable Clutch to use Caps Lock.
+    static let tapDuration: TimeInterval = 0.1
 
     // Caps uses an auxiliary system-key event, rather than an ordinary letter
     // key event. Leave input-source selection and Caps state to macOS.
@@ -29,14 +34,6 @@ enum CapsReplay {
         event.timestamp = CGEventTimestamp(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
         event.post(tap: .cghidEventTap)
     }
-}
-
-extension CapsReplay {
-    // A replayed short press: macOS switches input sources (or, if Caps Lock happens to
-    // be on, turns it off). Long enough to look like a real tap (a zero-length press
-    // made Electron apps switch the input source and switch it back), far below a
-    // long press. Clutch never turns Caps Lock on: disable Clutch to use Caps Lock.
-    static let tapDuration: TimeInterval = 0.1
 }
 
 extension AppDelegate {

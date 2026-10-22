@@ -25,7 +25,7 @@ _ = state.route(key: 3, down: true, repeated: false, bound: true)
 expect(state.route(key: 3, down: false, repeated: false, bound: true).swallow, "consume keyup when letter released first")
 expect(!releaseCaps().tap, "letter release does not turn chord into tap")
 capsDown()
-expect(!state.route(key: 11, down: true, repeated: false, bound: false).swallow, "unbound key passes normally")
+expect(state.route(key: 11, down: true, repeated: false, bound: false).swallow, "unbound Caps key is consumed")
 expect(!releaseCaps().tap, "unbound chord does not switch input")
 capsDown()
 state.beginChord()
@@ -37,22 +37,20 @@ print("PASS: standalone Caps, repeats, bound/unbound chords, both release orders
 
 // Caps held alone stays a standalone press however long (macOS times it, mirrored);
 // anything joining makes it a chord.
-func capsDown(at time: TimeInterval) { _ = state.route(key: 79, down: true, repeated: false, bound: false, time: time) }
-func releaseCaps(at time: TimeInterval) -> KeyboardState.Result { state.route(key: 79, down: false, repeated: false, bound: false, time: time) }
+// The times only document the scenario; the state machine does not time holds.
+func capsDown(at _: TimeInterval) { capsDown() }
+func releaseCaps(at _: TimeInterval) -> KeyboardState.Result { releaseCaps() }
 let longHold: TimeInterval = 1
 state.reset()
 capsDown(at: 100)
-expect(state.standaloneHoldStart == 100, "a standalone hold reports when it started")
 let shortPress = releaseCaps(at: 100 + longHold - 0.01)
 expect(shortPress.tap, "a short press is a standalone Caps press")
 capsDown(at: 200)
-_ = state.route(key: 79, down: true, repeated: true, bound: false, time: 200 + longHold)
+_ = state.route(key: 79, down: true, repeated: true, bound: false)
 let longPress = releaseCaps(at: 200 + longHold)
 expect(longPress.tap, "a long press alone is still a standalone Caps press")
-expect(state.standaloneHoldStart == nil, "no hold after release")
 capsDown(at: 300)
-_ = state.route(key: 3, down: true, repeated: false, bound: true, time: 300.1)
-expect(state.standaloneHoldStart == nil, "a key press ends the standalone hold")
+_ = state.route(key: 3, down: true, repeated: false, bound: true)
 let longChord = releaseCaps(at: 300 + longHold * 4)
 expect(!longChord.tap && longChord.launch == 3, "a long Caps + key hold runs the shortcut, not a Caps press")
 _ = state.route(key: 3, down: false, repeated: false, bound: true)
@@ -61,7 +59,7 @@ _ = state.modifierChanged(otherModifier: true)
 expect(!releaseCaps(at: 400 + longHold * 2).tap, "Caps + modifier held long is not a Caps press")
 capsDown(at: 500)
 state.cancelGesture()
-expect(state.standaloneHoldStart == 500, "a focus change keeps the standalone hold and its start")
+expect(state.held, "a focus change keeps the standalone hold")
 expect(releaseCaps(at: 500 + longHold).tap, "a hold across a focus change stays a Caps press")
 capsDown(at: 600)
 state.capsReleaseMissed()
@@ -86,7 +84,7 @@ capsDown(at: 900)
 _ = state.route(key: 3, down: true, repeated: false, bound: true)
 let escaped = state.route(key: 53, down: true, repeated: false, bound: false)
 expect(escaped.swallow && !state.showsKeyHint && state.launchCandidate == nil, "Escape is consumed and hides the key hint")
-expect(!state.route(key: 46, down: true, repeated: false, bound: true).swallow, "keys after Escape type normally")
+expect(state.route(key: 46, down: true, repeated: false, bound: true).swallow, "keys after Escape stay consumed until Caps release")
 let afterEscape = releaseCaps(at: 900 + longHold)
 expect(afterEscape.launch == nil && !afterEscape.tap, "releasing Caps after Escape does nothing")
 expect(state.route(key: 53, down: false, repeated: false, bound: false).swallow, "the Escape release is consumed")
@@ -192,15 +190,18 @@ capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
 let alone = releaseCaps()
 expect(alone.launch == 46 && alone.launchSecond == nil && !alone.tap, "Caps + M alone still opens its own app")
+_ = comboRoute(46, down: false)
 capsDown()
 _ = comboRoute(46, prefix: true)
 expect(releaseCaps().launch == nil, "a key that only starts two-key shortcuts runs nothing alone")
+_ = comboRoute(46, down: false)
 capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
 _ = comboRoute(46, down: false)
 _ = comboRoute(46, bound: true, prefix: true, combo: true)
 let doubled = releaseCaps()
 expect(doubled.launch == 46 && doubled.launchSecond == 46, "Caps + M + M uses the same key twice")
+_ = comboRoute(46, down: false)
 capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
 _ = comboRoute(46, down: false)
@@ -233,7 +234,7 @@ _ = comboRoute(7)
 expect(releaseCaps().launch == nil, "a third key means nothing runs")
 _ = comboRoute(46, down: false); _ = comboRoute(13, down: false); _ = comboRoute(7, down: false)
 capsDown()
-expect(!comboRoute(11).swallow && state.pendingKey == nil, "keys no shortcut uses pass through")
+expect(comboRoute(11).swallow && state.pendingKey == nil, "keys no shortcut uses are consumed")
 _ = comboRoute(11, down: false)
 _ = releaseCaps()
 capsDown()
@@ -259,6 +260,41 @@ let windowFirst = releaseCaps()
 expect(windowFirst.window == 123 && windowFirst.launch == nil, "window keys keep precedence over app shortcuts")
 state.reset()
 print("PASS: two-key shortcuts on Caps release, the same key twice, one-key and two-key shortcuts on one key, cancellation, precedence")
+// An unbound prefix must never be discarded (Caps A C is not Caps C).
+for releaseFirst in [false, true] {
+    state.reset()
+    capsDown()
+    expect(comboRoute(0).swallow, "unbound A press is owned")
+    expect(comboRoute(0, repeated: true).swallow, "unbound A repeats are owned")
+    if releaseFirst { expect(comboRoute(0, down: false).swallow, "unbound A release is owned") }
+    expect(comboRoute(8, bound: true).swallow, "C after unbound A is owned")
+    expect(state.launchCandidate == nil && state.pendingKey == nil, "A C cannot hint Chrome")
+    let invalid = releaseCaps()
+    expect(invalid.launch == nil && !invalid.tap, "A C cannot launch Chrome or switch input")
+    if !releaseFirst { expect(comboRoute(0, down: false).swallow, "A release after Caps stays owned") }
+    expect(comboRoute(8, down: false).swallow, "C release after Caps stays owned")
+    capsDown()
+    _ = comboRoute(8, bound: true)
+    expect(releaseCaps().launch == 8, "a fresh exact Caps C still launches Chrome")
+}
+for (key, _) in modifierFlags {
+    for releaseFirst in [false, true] {
+        state.reset()
+        capsDown()
+        expect(state.modifierChanged(key: key, otherModifier: true).swallow, "modifier press during Caps is owned")
+        if releaseFirst {
+            expect(state.modifierChanged(key: key, otherModifier: false, pressed: false).swallow, "modifier release before Caps is owned")
+        }
+        expect(comboRoute(0).swallow, "modified input during Caps stays owned")
+        expect(releaseCaps().launch == nil, "modified gesture launches nothing")
+        if !releaseFirst {
+            expect(state.modifierChanged(key: key, otherModifier: false, pressed: false).swallow, "modifier release after Caps stays owned")
+        }
+        expect(!state.modifierChanged(key: key, otherModifier: true).swallow, "fresh modifier after Caps passes")
+    }
+}
+state.reset()
+print("PASS: full Caps input ownership, strict unbound-prefix matching, modifier release ownership")
 let src = MappingPolicy.src, dst = MappingPolicy.dst
 let other: [String: UInt64] = [src: 0x700000004, dst: 0x700000005]
 let oldCaps: [String: UInt64] = [src: MappingPolicy.caps, dst: 0x7000000E0]
@@ -282,10 +318,10 @@ for modifier in ["Control", "Option"] {
     expect(!capsFirst.tap && !capsFirst.showFolders, "Caps then \(modifier), released first, has no action")
     _ = state.route(key: 79, down: true, repeated: false, bound: false, otherModifier: true)
     let extra = state.route(key: 3, down: true, repeated: false, bound: true, otherModifier: true)
-    expect(!extra.swallow && extra.launch == nil, "\(modifier) Caps with extra key passes through")
+    expect(extra.swallow && extra.launch == nil, "\(modifier) Caps with extra key is consumed")
     expect(!releaseCaps().tap, "extra key does not switch input")
 }
-print("PASS: Control/Option Caps have no action, both press/release orders, extra keys pass through")
+print("PASS: Control/Option Caps have no action, both press/release orders, extra keys consumed")
 
 state.reset()
 expect(!state.route(key: 49, down: true, repeated: false, bound: false).swallow, "Space without Caps types normally")
@@ -309,7 +345,7 @@ for capsReleasedFirst in [false, true] {
 state.reset()
 capsDown()
 let heldSpace = state.route(key: 49, down: true, repeated: true, bound: false)
-expect(!heldSpace.showFolders && !heldSpace.swallow, "Space already held before Caps does not open Folders")
+expect(!heldSpace.showFolders && heldSpace.swallow, "Space already held before Caps does not open Folders")
 state.reset()
 capsDown()
 expect(!state.modifierChanged(otherModifier: false, commandModifier: true).showFolders, "Caps Command no longer opens Folders")
@@ -322,7 +358,7 @@ for key in [UInt16(36), 76] {
     state.reset()
     capsDown()
     let enter = state.route(key: key, down: true, repeated: false, bound: false)
-    expect(!enter.showFolders && !enter.swallow, "unassigned Caps Enter passes through")
+    expect(!enter.showFolders && enter.swallow, "unassigned Caps Enter is consumed")
     expect(!releaseCaps().tap, "Caps Enter does not switch input")
     state.reset()
     capsDown()
@@ -378,7 +414,7 @@ for modifierFirst in [false, true] {
     _ = state.route(key: 79, down: true, repeated: false, bound: false, otherModifier: modifierFirst)
     if !modifierFirst { state.modifierChanged(otherModifier: true) }
     let blocked = state.route(key: 49, down: true, repeated: false, bound: false, otherModifier: true)
-    expect(!blocked.showFolders && !blocked.swallow, "Control/Option blocks Caps Space")
+    expect(!blocked.showFolders && blocked.swallow, "Control/Option blocks Caps Space and consumes it")
     _ = state.route(key: 49, down: false, repeated: false, bound: false, otherModifier: true)
     expect(!state.route(key: 49, down: true, repeated: false, bound: false).showFolders, "cancelled modifier gesture stays cancelled")
     expect(!releaseCaps().tap, "modified gesture never switches input")
@@ -392,7 +428,7 @@ state.reset()
 _ = state.route(key: 79, down: true, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
 let panelSpace = state.route(key: 49, down: true, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
 expect(!panelSpace.showFolders && !panelSpace.swallow, "existing selection panel never reopens; Space reaches the list")
-print("PASS: Caps Space, both release orders, repeats, cancellation, Enter passthrough, Command no longer opens")
+print("PASS: Caps Space, both release orders, repeats, cancellation, Enter consumption, Command no longer opens")
 state.reset()
 capsDown()
 expect(state.route(key: 49, down: true, repeated: false, bound: false).showFolders, "open panel while Caps held")
@@ -407,6 +443,27 @@ expect(!panelTap.openFolderSelection && panelTap.tap, "standalone Caps in the li
 capsDown()
 let closedPanelRelease = releaseCaps()
 expect(!closedPanelRelease.openFolderSelection && closedPanelRelease.tap, "outside panel Caps retains input switching")
+// Caps-held letters go directly to selection; their events never enter search.
+for releaseLetterFirst in [false, true] {
+    state.reset()
+    capsDown()
+    _ = state.route(key: KeyCode.space, down: true, repeated: false, bound: false)
+    let jump = state.route(key: 2, down: true, repeated: false, bound: true, folderSelectionActive: true, folderCount: 4)
+    expect(jump.swallow && jump.folderJump == 2 && jump.launch == nil, "Caps D jumps in the picker without typing D")
+    let repeating = state.route(key: 2, down: true, repeated: true, bound: false, folderSelectionActive: true, folderCount: 4)
+    expect(repeating.swallow && repeating.folderJump == nil, "held letter repeats do not edit search or jump again")
+    if releaseLetterFirst {
+        expect(state.route(key: 2, down: false, repeated: false, bound: false, folderSelectionActive: true).swallow, "letter release before Caps is consumed")
+    }
+    let release = state.route(key: KeyCode.hyper, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 4)
+    expect(release.openFolderSelection && !release.tap, "Caps release opens the jumped-to folder")
+    if !releaseLetterFirst {
+        expect(state.route(key: 2, down: false, repeated: false, bound: false, folderSelectionActive: true).swallow, "letter release after Caps is consumed")
+    }
+    let typing = state.route(key: 2, down: true, repeated: false, bound: false, folderSelectionActive: true)
+    expect(!typing.swallow && typing.folderJump == nil, "after Caps release ordinary typing reaches search")
+}
+state.reset()
 print("PASS: Caps release opens folder selection, navigation passthrough, no input switch, no duplicate confirmation")
 
 for (number, key) in [UInt16(18), 19, 20, 21, 23, 22, 26, 28, 25].enumerated() {
@@ -445,9 +502,9 @@ for releaseSpaceFirst in [false, true] {
     if releaseSpaceFirst { _ = state.route(key: 49, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9) }
     state.modifierChanged(otherModifier: false, commandModifier: true)
     let letter = state.route(key: 0, down: true, repeated: false, bound: true, commandModifier: true, folderSelectionActive: true, folderCount: 9)
-    expect(!letter.swallow && letter.stripCommandModifier && letter.launch == nil, "Command-held Caps letters reach folder type selection as plain typing")
+    expect(letter.swallow && letter.folderJump == 0 && letter.launch == nil, "Command-held Caps letters jump without editing search")
     let letterUp = state.route(key: 0, down: false, repeated: false, bound: true, commandModifier: true, folderSelectionActive: true, folderCount: 9)
-    expect(!letterUp.swallow && letterUp.stripCommandModifier, "navigation letter release also removes Command")
+    expect(letterUp.swallow, "Caps navigation letter release is consumed")
     let number = state.route(key: 20, down: true, repeated: false, bound: true, commandModifier: true, folderSelectionActive: true, folderCount: 9)
     expect(number.swallow && number.folderNumber == 2 && !number.openFolderSelection, "Command-held Caps number selects without opening")
     let release = state.route(key: 79, down: false, repeated: false, bound: false, commandModifier: true, folderSelectionActive: true, folderCount: 9)
@@ -811,11 +868,11 @@ windowKeysDefaults.removePersistentDomain(forName: windowKeysSuite)
 expect(WindowShortcuts.load(from: windowKeysDefaults) == .defaults, "nothing saved loads the defaults")
 windowKeys.save(to: windowKeysDefaults)
 expect(WindowShortcuts.load(from: windowKeysDefaults) == windowKeys, "window shortcuts round-trip, including unassigned actions")
-windowKeysDefaults.set(Data(#"{"center":40,"left":40}"#.utf8), forKey: WindowShortcuts.defaultsKey)
+windowKeysDefaults.set(Data(#"{"center":40,"left":40}"#.utf8), forKey: DefaultsKey.windowShortcuts)
 let partialKeys = WindowShortcuts.load(from: windowKeysDefaults)
 expect(partialKeys.key(for: .left) == 40 && partialKeys.key(for: .center) == unassignedKey && partialKeys.key(for: .up) == 126,
        "missing actions keep defaults and a repeated key stays with one action")
-windowKeysDefaults.set(Data("junk".utf8), forKey: WindowShortcuts.defaultsKey)
+windowKeysDefaults.set(Data("junk".utf8), forKey: DefaultsKey.windowShortcuts)
 expect(WindowShortcuts.load(from: windowKeysDefaults) == .defaults, "unreadable window shortcuts load the defaults")
 windowKeysDefaults.removePersistentDomain(forName: windowKeysSuite)
 // Preview plans: the window actions of one Caps hold, applied on release.

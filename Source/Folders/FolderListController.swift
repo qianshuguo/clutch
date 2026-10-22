@@ -10,6 +10,8 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
     let presentation: FolderListPresentation
     weak var searchField: NSTextField?
     private(set) var filter = ""
+    private var capsJumpQuery = ""
+    private var capsJumpTime: TimeInterval = 0
     private var compositionObserver: NSObjectProtocol?
 
     init(owner: AppDelegate, presentation: FolderListPresentation) {
@@ -147,8 +149,28 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
         let visible = visibleIndices
         return IndexSet(table.selectedRowIndexes.filter { visible.indices.contains($0) }.map { visible[$0] })
     }
+    func resetCapsJump() {
+        capsJumpQuery = ""
+        capsJumpTime = 0
+    }
+    // Caps-held typing jumps within the displayed rows without changing the search,
+    // row order or field editor. Nearby keystrokes refine the name/pinyin match.
+    func jumpToFolder(key: UInt16, time: TimeInterval) {
+        guard let text = keys.first(where: { $0.1 == key })?.0 else { return }
+        let visible = visibleIndices
+        let folders = visible.map { owner.folders[$0] }
+        let query = time - capsJumpTime < 0.8 ? capsJumpQuery + text : text
+        let match = Self.ordered(folders, query: query).first
+        let fallback = match ?? Self.ordered(folders, query: text).first
+        capsJumpQuery = match != nil ? query : text
+        capsJumpTime = time
+        guard let row = fallback else { return }
+        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        table.scrollRowToVisible(row)
+    }
     // The best match is selected, so Return or releasing Caps opens it.
     func setFilter(_ text: String) {
+        resetCapsJump()
         // Compared with what is being edited, input method composition included, so
         // filtering never overwrites text still being composed.
         if let field = searchField, ((field.currentEditor() as? NSTextView)?.string ?? field.stringValue) != text {

@@ -15,7 +15,6 @@ final class KeyRecorder: NSButton {
     // False while Clutch cannot see Caps (disabled, or no Accessibility access).
     var capsAvailable: (() -> Bool)?
     private var recordedKeys: [UInt16] = []
-    var recordsWithCaps: Bool { onKeys != nil }
     override var acceptsFirstResponder: Bool { true }
     override func mouseDown(with event: NSEvent) {
         if !event.modifierFlags.intersection([.command, .shift]).isEmpty,
@@ -42,13 +41,13 @@ final class KeyRecorder: NSButton {
     }
     // Caps went down: show that the field is listening for the key(s).
     func capsPressed() {
-        guard recording, recordsWithCaps, capsAvailable?() != false else { return }
+        guard recording, capsAvailable?() != false else { return }
         recordedKeys = []
         title = "Caps + …"
     }
     // A key pressed while Caps is held, in press order.
     func capsKeyPressed(_ code: UInt16) {
-        guard recording, recordsWithCaps else { return }
+        guard recording else { return }
         if code == KeyCode.escape { cancelRecording(); return }
         guard keyName(code) != nil else { NSSound.beep(); return }
         guard recordedKeys.count < maxKeys else { NSSound.beep(); return }

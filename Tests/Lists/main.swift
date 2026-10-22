@@ -121,6 +121,19 @@ expect(!search.control(searchField, textView: fieldEditor, doCommandBy: #selecto
 search.setFilter("Fi")
 expect(searchField.stringValue == "Fi", "setting the filter updates the field")
 search.setFilter("")
+search.jumpToFolder(key: 1, time: 10) // S
+expect(pickerTable.selectedRow == 1 && pickerTable.numberOfRows == 2 && search.filter.isEmpty && searchField.stringValue.isEmpty,
+       "Caps S jumps to Second without filtering or typing into search")
+search.jumpToFolder(key: 14, time: 10.1) // E
+expect(pickerTable.selectedRow == 1 && pickerTable.numberOfRows == 2, "nearby Caps letters refine the jump")
+search.jumpToFolder(key: 3, time: 12) // F
+expect(pickerTable.selectedRow == 0, "a later Caps letter starts a new jump")
+search.resetCapsJump()
+search.jumpToFolder(key: 1, time: 12.1)
+expect(pickerTable.selectedRow == 1 && search.filter.isEmpty, "a new Caps gesture resets the jump text")
+typeSearch("Fi")
+expect(pickerTable.numberOfRows == 1 && search.filter == "Fi", "ordinary search still filters after Caps navigation")
+search.setFilter("")
 search.searchField = nil
 print("PASS: Folders search field filters by name and path, maps rows, Escape/arrows")
 let ranked = [FolderEntry(name: "Kidocs", path: "/k"), FolderEntry(name: "Project Docs", path: "/p"),
@@ -159,7 +172,7 @@ expect(owner.state.held, "recording preserves standalone Caps")
 expect(owner.state.route(key: 79, down: false, repeated: false, bound: false, shortcutsEnabled: false).tap,
        "standalone Caps still replays after recording begins")
 expect(applications.table.selectedRow == 0, "recording selects the originating application table")
-expect(owner.table?.selectedRow == -1, "recording does not select a different table")
+expect(owner.applicationList?.table.selectedRow == -1, "recording does not select a different table")
 expect(recorder.title == "Caps + F", "assigned key label is preserved")
 let header = PlainListHeaderView(frame: NSRect(x: 0, y: 0, width: 460, height: 28))
 header.tableView = applications.table
@@ -280,17 +293,14 @@ for count in 0...5 {
     for mask in 0..<(1 << count) {
         var items = Array(0..<count)
         let selected = IndexSet(items.filter { mask & (1 << $0) != 0 })
-        let next = ListSelection.remove(selected, from: &items)
+        let removed = ListSelection.remove(selected, from: &items)
         expect(items == Array(0..<count).filter { !selected.contains($0) },
                "multi-delete preserves surviving order")
-        if let first = selected.first {
-            let expected = items.isEmpty ? IndexSet() : IndexSet(integer: min(first, items.count - 1))
-            expect(next == expected, "multi-delete selects the nearest surviving row")
-        } else { expect(next == nil, "empty selection does not trigger a save") }
+        expect(removed == !selected.isEmpty, "only a non-empty selection triggers a save")
     }
 }
 var unchanged = [0, 1]
-expect(ListSelection.remove(IndexSet(integer: 99), from: &unchanged) == nil && unchanged == [0, 1],
+expect(!ListSelection.remove(IndexSet(integer: 99), from: &unchanged) && unchanged == [0, 1],
        "stale selection is harmless")
 print("PASS: shared deletion boundaries, presentation settings, header/body alignment")
 
@@ -309,7 +319,7 @@ func windowRecorder(_ row: Int) -> KeyRecorder? {
 }
 let centerRow = WindowCommand.allCases.firstIndex(of: .center)!
 expect(windowRecorder(centerRow)?.title == shortcutTitle(windowOwner.windowShortcuts.key(for: .center), nil), "shortcut field shows the current key")
-let savedWindowKeys = UserDefaults.standard.data(forKey: WindowShortcuts.defaultsKey)
+let savedWindowKeys = UserDefaults.standard.data(forKey: DefaultsKey.windowShortcuts)
 windowOwner.windowShortcuts = .defaults
 if let recorder = windowRecorder(centerRow) {
     expect(windowOwner.assignWindowShortcut(40, to: .center, recorder: recorder), "a free key is assigned without asking")
@@ -318,8 +328,8 @@ if let recorder = windowRecorder(centerRow) {
 expect(windowOwner.windowShortcuts.key(for: .center) == 40 && windowRecorder(centerRow)?.title == "Caps + K", "assignment updates the list")
 windowOwner.restoreDefaultWindowShortcuts()
 expect(windowOwner.windowShortcuts == .defaults && windowRecorder(centerRow)?.title == "Caps + /", "Restore Defaults brings back Caps + /")
-if let data = savedWindowKeys { UserDefaults.standard.set(data, forKey: WindowShortcuts.defaultsKey) }
-else { UserDefaults.standard.removeObject(forKey: WindowShortcuts.defaultsKey) }
+if let data = savedWindowKeys { UserDefaults.standard.set(data, forKey: DefaultsKey.windowShortcuts) }
+else { UserDefaults.standard.removeObject(forKey: DefaultsKey.windowShortcuts) }
 print("PASS: window shortcut list")
 
 // App List search matches application names only.

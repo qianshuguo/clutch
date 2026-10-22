@@ -62,13 +62,13 @@ enum ListGeometry {
     static let pathLeadingInset: CGFloat = 12
     // The field takes the space the separate “Caps +” label used to share with it.
     static let shortcutRecorderWidth: CGFloat = 166
+    // Right-aligned with the column's trailing edge.
     static func shortcutOrigin(in column: NSRect) -> CGFloat {
-        column.maxX - shortcutRecorderWidth + shortcutTrailingOffset
+        column.maxX - shortcutRecorderWidth
     }
     static let leadingInset: CGFloat = 16
     static let trailingInset: CGFloat = 12
     static let detailColumnOffset: CGFloat = 12
-    static let shortcutTrailingOffset: CGFloat = -trailingInset + detailColumnOffset
 }
 
 // Match Mos's shared backdrop; lists and scrollers reveal this same surface.
@@ -133,7 +133,7 @@ final class PlainListHeaderView: NSView {
         secondLabel.stringValue = secondColumn.title
         firstLabel.frame = NSRect(x: firstBody.minX + ListGeometry.leadingInset, y: 7, width: max(0, firstBody.width - ListGeometry.leadingInset - ListGeometry.trailingInset), height: 18)
         let secondX = folders ? secondBody.minX + ListGeometry.pathLeadingInset + FolderListPresentation.preferences.pathOffset : ListGeometry.shortcutOrigin(in: secondBody)
-        secondLabel.frame = NSRect(x: secondX, y: 7, width: max(0, secondBody.maxX - secondX - ListGeometry.trailingInset + ListGeometry.detailColumnOffset), height: 18)
+        secondLabel.frame = NSRect(x: secondX, y: 7, width: max(0, secondBody.maxX - secondX), height: 18)
         bottomRule.frame = NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1)
     }
 }
@@ -211,12 +211,13 @@ enum ListSelection {
     static func proposed(_ indexes: IndexSet, in table: NSTableView) -> IndexSet {
         NSApp.currentEvent?.type == .leftMouseDragged ? table.selectedRowIndexes : indexes
     }
-    // nil means no valid selection; an empty set means all items were removed.
-    static func remove<Item>(_ indexes: IndexSet, from items: inout [Item]) -> IndexSet? {
+    // False when no index was valid, so there is nothing to save. Callers reselect by
+    // table row, since a search may be filtering the rows.
+    static func remove<Item>(_ indexes: IndexSet, from items: inout [Item]) -> Bool {
         let valid = indexes.intersection(IndexSet(integersIn: items.indices))
-        guard let first = valid.first else { return nil }
+        guard !valid.isEmpty else { return false }
         for row in valid.reversed() { items.remove(at: row) }
-        return items.isEmpty ? IndexSet() : IndexSet(integer: min(first, items.count - 1))
+        return true
     }
 }
 

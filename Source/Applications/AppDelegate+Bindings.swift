@@ -57,116 +57,27 @@ final class ApplicationWindowCycle {
 
     // Returns false only when Accessibility answered and listed no usable window;
     // a timeout or error returns true so a busy app is never sent a reopen.
-    @discardableResult
     private func advance(processID: pid_t, cycle: Bool, frontWhenUnfocused: Bool) -> Bool {
-        let application = AXUIElementCreateApplication(processID)
-        AXUIElementSetMessagingTimeout(application, 0.25)
-        func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
-            var result: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &result) == .success else { return nil }
-            return result
-        }
-        guard let allWindows = value(application, kAXWindowsAttribute) as? [AXUIElement] else {
+        let application = AXQuery.application(processID)
+        guard let allWindows = AXQuery.value(application, kAXWindowsAttribute) as? [AXUIElement] else {
             order = ApplicationWindowOrder()
             return true
         }
         let available = allWindows.filter {
-            (value($0, kAXSubroleAttribute) as? String) == kAXStandardWindowSubrole &&
-            (value($0, kAXMinimizedAttribute) as? Bool) == false
+            (AXQuery.value($0, kAXSubroleAttribute) as? String) == kAXStandardWindowSubrole &&
+            (AXQuery.value($0, kAXMinimizedAttribute) as? Bool) == false
         }
         guard !available.isEmpty else {
             order = ApplicationWindowOrder()
             return false
         }
-        let focusedValue = value(application, kAXFocusedWindowAttribute)
-        let focused: AXUIElement?
-        if let focusedValue = focusedValue, CFGetTypeID(focusedValue) == AXUIElementGetTypeID() {
-            focused = (focusedValue as! AXUIElement)
-        } else {
-            focused = nil
-        }
+        let focused = AXQuery.element(application, kAXFocusedWindowAttribute)
         guard let next = order.next(processID: processID, available: available, focused: focused, cycle: cycle,
                                     frontWhenUnfocused: frontWhenUnfocused, equals: { CFEqual($0, $1) }) else { return true }
         guard AXUIElementPerformAction(next, kAXRaiseAction as CFString) == .success else { return true }
         AXUIElementSetAttributeValue(next, kAXMainAttribute as CFString, kCFBooleanTrue)
         AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, next)
         return true
-    }
-}
-
-// While Caps is held, the app that releasing Caps would open: its icon and name in a
-// small HUD at the center of the screen. It never takes focus or mouse events.
-// Releasing Caps hides it, unless the app is not running: then the launch
-// confirmation takes its place and animates to its second stage in the same window.
-final class LaunchHintOverlay {
-    // The app path last requested by the key handler, set synchronously in the tap
-    // callback so each key press compares against it without waiting for the UI.
-    var target: String?
-    private var panel: NSPanel?
-    private var shownPath: String?
-    private let content = LaunchHUDView()
-    static let fade: TimeInterval = 0.12
-
-    // The hint's frame while it is on screen, where a launch confirmation takes over.
-    var visibleFrame: NSRect? {
-        guard let panel = panel, panel.isVisible else { return nil }
-        return panel.frame
-    }
-    // The keys shown on top of the card ("M W"), copied by the launch confirmation.
-    var keys: String {
-        get { content.keys }
-        set { content.keys = newValue }
-    }
-
-    func show(_ binding: AppShortcut) {
-        if shownPath != binding.path {
-            shownPath = binding.path
-            content.icon = NSWorkspace.shared.icon(forFile: binding.path)
-            content.name = binding.name
-        }
-        let panel = self.panel ?? makePanel()
-        self.panel = panel
-        // In the Caps pill's place (the pill hides), appearing at once.
-        panel.setFrame(LaunchHUD.frame(), display: true)
-        if !panel.isVisible { panel.orderFrontRegardless() }
-        // A zero-length animation replaces a fade-out still running from this pass.
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0
-            panel.animator().alphaValue = 1
-        }
-    }
-    func hide() {
-        guard let panel = panel, panel.isVisible else { return }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = Self.fade
-            panel.animator().alphaValue = 0
-        }, completionHandler: { [weak panel] in
-            // A hint shown again during the fade stays visible.
-            if let panel = panel, panel.alphaValue == 0 { panel.orderOut(nil) }
-        })
-    }
-    // Without the fade, once a launch confirmation has taken the hint's place.
-    func hideNow() {
-        guard let panel = panel, panel.isVisible else { return }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0
-            panel.animator().alphaValue = 0
-        }
-        panel.orderOut(nil)
-    }
-    private func makePanel() -> NSPanel {
-        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: LaunchHUD.size),
-                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.ignoresMouseEvents = true
-        panel.level = .floating
-        panel.isReleasedWhenClosed = false
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
-        panel.contentView = content
-        return panel
     }
 }
 
@@ -177,11 +88,9 @@ extension AppDelegate {
         let hint = shortcutsEnabled ? state.launchCandidate.flatMap { candidate in
             bindings.first { $0.matches(candidate.first, candidate.second) }
         } : nil
-        guard hint?.path != launchHint.target else { return }
-        launchHint.target = hint?.path
-        afterKeyEvent { [weak self] in
-            if let hint = hint { self?.launchHint.show(hint) } else { self?.launchHint.hide() }
-        }
+        guard hint?.path != capsOverlay.target else { return }
+        // Applied together with the keys from updateCapsHUD, after the key event.
+        capsOverlay.setApp(hint)
     }
 
     // `second` makes a two-key shortcut (Caps + code + second). Shortcuts run when Caps
@@ -251,13 +160,19 @@ extension AppDelegate {
     }
     // Example: "Caps + M already opens Mail." / "To use Caps + M + W for Word, Mail will lose its shortcut."
     func confirmShortcutReplacement(inUse: [String], shortcut: String, newOwner: String, losers: [String]) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = inUse.joined(separator: "\n")
         let loses = losers.count == 1 ? "will lose its shortcut" : "will lose their shortcuts"
-        alert.informativeText = "To use Caps + \(shortcut) for \(newOwner), \(listNames(losers)) \(loses)."
-        let replaceButton = alert.addButton(withTitle: "Replace")
-        replaceButton.keyEquivalent = "\r"
-        replaceButton.keyEquivalentModifierMask = []
+        return confirmAlert(inUse.joined(separator: "\n"),
+                            "To use Caps + \(shortcut) for \(newOwner), \(listNames(losers)) \(loses).",
+                            confirm: "Replace")
+    }
+    // Return confirms and Escape cancels, whichever button has focus.
+    func confirmAlert(_ message: String, _ informative: String, confirm: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = informative
+        let confirmButton = alert.addButton(withTitle: confirm)
+        confirmButton.keyEquivalent = "\r"
+        confirmButton.keyEquivalentModifierMask = []
         let cancelButton = alert.addButton(withTitle: "Cancel")
         cancelButton.keyEquivalent = "\u{1b}"
         cancelButton.keyEquivalentModifierMask = []
@@ -314,7 +229,7 @@ extension AppDelegate {
     // their applications. The row now at the first removed position is selected.
     @objc func removeBinding() {
         guard let list = applicationList, let firstRow = list.table.selectedRowIndexes.first else { return }
-        guard ListSelection.remove(list.selectedBindingIndices, from: &bindings) != nil else { return }
+        guard ListSelection.remove(list.selectedBindingIndices, from: &bindings) else { return }
         saveBindings()
         let rows = list.table.numberOfRows
         list.table.selectRowIndexes(rows == 0 ? IndexSet() : IndexSet(integer: min(firstRow, rows - 1)),
@@ -359,8 +274,7 @@ extension AppDelegate {
         }
         showingLaunchConfirmation = true
         closePreferencesForAction(keepingApplicationActive: true)
-        let confirmed = LaunchConfirmation().run(appName: binding.name, icon: workspace.icon(forFile: target.path),
-                                                 replacing: launchHint)
+        let confirmed = capsOverlay.confirm(appName: binding.name, icon: workspace.icon(forFile: target.path))
         showingLaunchConfirmation = false
         hideDockIfIdle()
         guard confirmed else { return }

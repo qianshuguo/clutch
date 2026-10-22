@@ -28,7 +28,7 @@ final class WindowShortcutListController: NSObject, NSTableViewDataSource, NSTab
         let cell = NSView(frame: NSRect(x: 0, y: 0, width: cellWidth, height: AppDelegate.appRowHeight))
         let command = commands[row]
         if columnIndex == 0 {
-            let icon = NSImageView(frame: AppDelegate.listIconFrame.offsetBy(dx: ListGeometry.leadingInset - AppDelegate.listIconFrame.minX, dy: 0))
+            let icon = NSImageView(frame: AppDelegate.listIconFrame)
             let symbolImage = NSImage(systemSymbolName: command.symbol, accessibilityDescription: command.title)
                 ?? NSImage(systemSymbolName: command.fallbackSymbol, accessibilityDescription: command.title)
             icon.image = symbolImage?.withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
@@ -71,7 +71,7 @@ extension AppDelegate {
                                              losers: replacedNames) else { return false }
         }
         if !appNames.isEmpty {
-            for index in bindings.indices where bindings[index].hasShortcut && bindings[index].key == code { bindings[index].clearShortcut() }
+            for index in apps.indices { bindings[index].clearShortcut() }
             saveBindings()
         }
         windowShortcuts.assign(code, to: command)
@@ -88,10 +88,7 @@ extension AppDelegate {
     }
     // Bottom bar matching App List's, with Restore Defaults in place of + / −.
     func addWindowShortcutControls(to content: NSView, width: CGFloat) {
-        let divider = NSBox(frame: NSRect(x: 0, y: 32, width: width, height: 1))
-        divider.boxType = .separator
-        divider.autoresizingMask = [.width]
-        content.addSubview(divider)
+        addListBottomDivider(to: content, width: width)
         let button = ListActionButton(action: { [weak self] in self?.restoreDefaultWindowShortcuts() })
         button.title = "Restore Defaults"
         button.bezelStyle = .rounded
@@ -113,19 +110,12 @@ extension AppDelegate {
     func restoreDefaultWindowShortcuts() {
         (window?.firstResponder as? KeyRecorder)?.cancelRecording()
         let defaults = WindowShortcuts.defaults
-        let conflicts = bindings.filter { $0.key != unassignedKey && defaults.command(for: $0.key) != nil }
+        let conflicts = bindings.filter { defaults.command(for: $0.key) != nil }
         if !conflicts.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = "Restore default window shortcuts?"
             let list = conflicts.map { "\($0.name) (Caps + \(shortcutName($0.key, $0.secondKey) ?? "?"))" }.joined(separator: ", ")
-            alert.informativeText = "These apps will stay in App List without a shortcut: \(list)."
-            let restoreButton = alert.addButton(withTitle: "Restore")
-            restoreButton.keyEquivalent = "\r"
-            restoreButton.keyEquivalentModifierMask = []
-            let cancelButton = alert.addButton(withTitle: "Cancel")
-            cancelButton.keyEquivalent = "\u{1b}"
-            cancelButton.keyEquivalentModifierMask = []
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            guard confirmAlert("Restore default window shortcuts?",
+                               "These apps will stay in App List without a shortcut: \(list).",
+                               confirm: "Restore") else { return }
             for index in bindings.indices where defaults.command(for: bindings[index].key) != nil {
                 bindings[index].clearShortcut()
             }

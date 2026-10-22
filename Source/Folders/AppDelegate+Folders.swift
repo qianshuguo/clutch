@@ -127,10 +127,7 @@ extension AppDelegate {
         let home: [FileManager.SearchPathDirectory] = [.downloadsDirectory, .desktopDirectory, .documentDirectory]
         let urls = home.compactMap { fileManager.urls(for: $0, in: .userDomainMask).first }
             + [URL(fileURLWithPath: "/Applications", isDirectory: true)]
-        return urls.map { $0.standardizedFileURL.path }.filter { path in
-            var directory: ObjCBool = false
-            return fileManager.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
-        }.map { FolderEntry(name: fileManager.displayName(atPath: $0), path: $0) }
+        return urls.map { $0.standardizedFileURL.path }.filter(fileManager.isDirectory(atPath:)).map { FolderEntry(name: fileManager.displayName(atPath: $0), path: $0) }
     }
     // Falls back to the default list when nothing is saved. Unreadable saved data is
     // preserved and reported by the thrown error instead of being silently replaced.
@@ -178,7 +175,7 @@ extension AppDelegate {
     func removeFolders(from controller: FolderListController) {
         let targetTable = controller.table
         let firstRow = targetTable.selectedRowIndexes.first
-        guard ListSelection.remove(controller.selectedFolderIndices, from: &folders) != nil else { return }
+        guard ListSelection.remove(controller.selectedFolderIndices, from: &folders) else { return }
         saveFolders()
         let rows = targetTable.numberOfRows
         if let first = firstRow, rows > 0 {
@@ -190,10 +187,7 @@ extension AppDelegate {
         guard targetTable.window?.attachedSheet == nil, !selection.isEmpty else { return }
         let selected = selection.compactMap { folders.indices.contains($0) ? folders[$0] : nil }
         let owner = targetTable.window
-        let result = FolderBatchOpen.run(selected, isDirectory: { path in
-            var directory: ObjCBool = false
-            return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
-        }, open: { folder in
+        let result = FolderBatchOpen.run(selected, isDirectory: FileManager.default.isDirectory(atPath:), open: { folder in
             self.closePreferencesForAction()
             return NSWorkspace.shared.open(URL(fileURLWithPath: folder.path, isDirectory: true))
         })

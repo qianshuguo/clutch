@@ -11,12 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // from makeListScroll (33 bottom bar, 28 header, 6 + 6 spacing). 7 rows → 311.
     static let preferenceSize = NSSize(width: 460, height: 73 + CGFloat(WindowCommand.allCases.count) * appRowHeight)
     static let appRowHeight: CGFloat = 34
-    static let listIconFrame = NSRect(x: 6, y: 7, width: 20, height: 20)
-    static let listNameFrame = NSRect(x: 34, y: 7, width: 172, height: 18)
+    static let listIconFrame = NSRect(x: ListGeometry.leadingInset, y: 7, width: 20, height: 20)
+    static let listNameFrame = NSRect(x: ListGeometry.leadingInset + 28, y: 7, width: 172, height: 18)
     var item: NSStatusItem!
     var window: NSWindow!
     var applicationList: ApplicationListController?
-    var table: NSTableView? { applicationList?.table }
     var toggleButton: NSButton!
     var toggleMenuItems: [NSMenuItem] = []
     var loginCheckbox: NSButton?
@@ -40,9 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let applicationWindowCycle = ApplicationWindowCycle()
     let windowManager = WindowManager()
     let windowPreviewOverlay = WindowPreviewOverlay()
-    let launchHint = LaunchHintOverlay()
-    let capsHUD = CapsHUD()
-    // Whether the key handler last asked the Caps HUD to show something.
+    // The one Caps HUD window: keys pressed, app card, and launch confirmation.
+    let capsOverlay = CapsOverlay()
+    // Whether the key handler last asked the Caps HUD to show keys.
     var capsHUDActive = false
     var windowPreview: WindowPreviewSession?
     var windowShortcuts = WindowShortcuts.load()
