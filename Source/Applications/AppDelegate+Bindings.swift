@@ -112,21 +112,26 @@ final class LaunchHintOverlay {
         guard let panel = panel, panel.isVisible else { return nil }
         return panel.frame
     }
+    // The keys shown on top of the card ("M W"), copied by the launch confirmation.
+    var keys: String {
+        get { content.keys }
+        set { content.keys = newValue }
+    }
 
     func show(_ binding: AppShortcut) {
-        let panel = self.panel ?? makePanel()
-        self.panel = panel
         if shownPath != binding.path {
             shownPath = binding.path
             content.icon = NSWorkspace.shared.icon(forFile: binding.path)
             content.name = binding.name
         }
-        // The screen with the key window, where the user is working.
-        panel.setFrame(LaunchHUD.frame(), display: false)
-        if !panel.isVisible { panel.alphaValue = 0; panel.orderFrontRegardless() }
-        guard panel.alphaValue < 1 else { return }
+        let panel = self.panel ?? makePanel()
+        self.panel = panel
+        // In the Caps pill's place (the pill hides), appearing at once.
+        panel.setFrame(LaunchHUD.frame(), display: true)
+        if !panel.isVisible { panel.orderFrontRegardless() }
+        // A zero-length animation replaces a fade-out still running from this pass.
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.fade
+            context.duration = 0
             panel.animator().alphaValue = 1
         }
     }

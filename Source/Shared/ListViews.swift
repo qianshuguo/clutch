@@ -140,6 +140,13 @@ final class PlainListHeaderView: NSView {
 
 final class InsetListRowView: NSTableRowView {
     static let selectionInset: CGFloat = 6
+    // The Folders picker keeps focus in its search field, so its list never has focus;
+    // its selection still uses the accent color.
+    var alwaysEmphasized = false
+    override var isEmphasized: Bool {
+        get { alwaysEmphasized || super.isEmphasized }
+        set { super.isEmphasized = newValue }
+    }
     override func drawSelection(in dirtyRect: NSRect) {
         let inset = Self.selectionInset
         // The viewport already excludes a visible legacy scrollbar. Hidden overlay

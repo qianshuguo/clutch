@@ -32,12 +32,12 @@ extension AppDelegate {
         content.addSubview(scroll)
         if presentation.headerHeight > 0 { addListHeader(to: content, table: list, size: size) }
         addListControls(to: content, width: size.width, leadingInset: inset,
-                        add: { [weak self, weak list] in
-                            guard let list = list else { return }
-                            self?.addFolders(to: list)
-                        }, remove: { [weak self, weak list] in
-                            guard let list = list else { return }
-                            self?.removeFolders(from: list)
+                        add: { [weak self, weak controller] in
+                            guard let controller = controller else { return }
+                            self?.addFolders(to: controller)
+                        }, remove: { [weak self, weak controller] in
+                            guard let controller = controller else { return }
+                            self?.removeFolders(from: controller)
                         }, itemName: "Folder")
         if presentation == .preferences {
             addListHelp([
@@ -53,8 +53,10 @@ extension AppDelegate {
         guard !showingLaunchConfirmation else { return }
         closePreferencesForAction(keepingApplicationActive: true)
         if folderWindow == nil {
+            // One window: the search field across its top, the list below. The search
+            // field sits where the Caps pill was, so the pill seems to open into it.
             let contentSize = Self.preferenceSize
-            let panelSize = NSSize(width: contentSize.width, height: contentSize.height + 6)
+            let panelSize = NSSize(width: contentSize.width, height: contentSize.height + Self.folderSearchBarHeight)
             // Match the launch confirmation's native rounded, transparent title-bar shell.
             let panel = FolderPanel(contentRect: NSRect(origin: .zero, size: panelSize),
                                     styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
@@ -69,21 +71,43 @@ extension AppDelegate {
             panel.hasShadow = true
             panel.isReleasedWhenClosed = false
             panel.delegate = self
-            panel.center()
             let folderContent = makeFoldersContent(size: contentSize)
             let list = folderContent.controller.table
             let shell = ListSurface(frame: NSRect(origin: .zero, size: panelSize))
             shell.addSubview(folderContent.content)
+            // A native search field: system caret, selection and input methods.
+            let field = NSSearchField()
+            field.controlSize = .large
+            field.font = .systemFont(ofSize: 15)
+            field.placeholderString = "Search Folders"
+            field.sendsSearchStringImmediately = true
+            field.focusRingType = .none
+            field.setAccessibilityLabel("Search folders")
+            field.sizeToFit()
+            let fieldHeight = field.frame.height
+            field.frame = NSRect(x: 10, y: (contentSize.height + (Self.folderSearchBarHeight - fieldHeight) / 2).rounded(),
+                                 width: panelSize.width - 20, height: fieldHeight)
+            field.autoresizingMask = [.width, .minYMargin]
+            field.delegate = folderContent.controller
+            folderContent.controller.searchField = field
+            shell.addSubview(field)
             panel.contentView = shell
+            // The search field's center on the Caps pill's center.
+            let pill = CapsHUDGeometry.keyFrame()
+            let fieldInWindow = field.convert(field.bounds, to: nil)
+            panel.setFrameOrigin(NSPoint(x: (pill.midX - panelSize.width / 2).rounded(),
+                                         y: (pill.midY - fieldInWindow.midY).rounded()))
             panel.openSelection = list.openSelection
             panel.selectNumber = { [weak list] row in
                 guard let list = list, (0..<list.numberOfRows).contains(row) else { return }
+                // The search field keeps focus.
                 list.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
                 list.scrollRowToVisible(row)
-                list.window?.makeFirstResponder(list)
             }
             folderWindow = panel; folderList = folderContent.controller
         }
+        // Each opening starts a new search.
+        folderList?.setFilter("")
         folderTable?.reloadData()
         if folderTable?.selectedRow == -1, !folders.isEmpty {
             folderTable?.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
@@ -92,9 +116,11 @@ extension AppDelegate {
             panel.previousFocus = PreviousFocus()
         }
         folderWindow?.makeKeyAndOrderFront(nil)
-        folderWindow?.makeFirstResponder(folderTable)
+        let focus: NSResponder? = folderList?.searchField ?? folderTable
+        folderWindow?.makeFirstResponder(focus)
         NSApp.activateFromBackground()
     }
+    static let folderSearchBarHeight: CGFloat = 44
     // First-run Folders list, in order (Caps + 1…4). Folders that do not exist are skipped.
     static var defaultFolders: [FolderEntry] {
         let fileManager = FileManager.default
@@ -122,7 +148,8 @@ extension AppDelegate {
         folderTable?.reloadData()
         preferencesFolderTable?.reloadData()
     }
-    func addFolders(to targetTable: NSTableView) {
+    func addFolders(to controller: FolderListController) {
+        let targetTable = controller.table
         guard let owner = targetTable.window else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose Folders"
@@ -137,6 +164,8 @@ extension AppDelegate {
                 self.folders.append(FolderEntry(name: FileManager.default.displayName(atPath: path), path: path))
                 selected = self.folders.count - 1
             }
+            // Rows equal folder indexes once nothing is filtered out.
+            controller.setFilter("")
             self.saveFolders()
             if let index = selected {
                 targetTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
@@ -144,15 +173,21 @@ extension AppDelegate {
             }
         }
     }
-    func removeFolders(from targetTable: NSTableView) {
-        guard let selection = ListSelection.remove(targetTable.selectedRowIndexes, from: &folders) else { return }
+    // Removes the selected folders (mapped through a search) and selects the row
+    // that took the first one's place.
+    func removeFolders(from controller: FolderListController) {
+        let targetTable = controller.table
+        let firstRow = targetTable.selectedRowIndexes.first
+        guard ListSelection.remove(controller.selectedFolderIndices, from: &folders) != nil else { return }
         saveFolders()
-        targetTable.selectRowIndexes(selection, byExtendingSelection: false)
+        let rows = targetTable.numberOfRows
+        if let first = firstRow, rows > 0 {
+            targetTable.selectRowIndexes(IndexSet(integer: min(first, rows - 1)), byExtendingSelection: false)
+        }
     }
-    func openSelectedFolders(in targetTable: NSTableView) {
-        guard targetTable.window?.attachedSheet == nil,
-              !targetTable.selectedRowIndexes.isEmpty else { return }
-        let selection = targetTable.selectedRowIndexes
+    // `selection`: indexes into `folders` (rows mapped through any search).
+    func openSelectedFolders(_ selection: IndexSet, in targetTable: NSTableView) {
+        guard targetTable.window?.attachedSheet == nil, !selection.isEmpty else { return }
         let selected = selection.compactMap { folders.indices.contains($0) ? folders[$0] : nil }
         let owner = targetTable.window
         let result = FolderBatchOpen.run(selected, isDirectory: { path in

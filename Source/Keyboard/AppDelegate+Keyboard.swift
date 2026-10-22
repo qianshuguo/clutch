@@ -65,6 +65,8 @@ extension AppDelegate {
         if let tap = tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         tap = nil; runLoopSource = nil; state.reset()
+        capsHUDActive = false; capsHUD.hide(animated: false)
+        launchHint.target = nil; launchHint.hideNow()
         do { try mapping.restore() } catch { return error }
         setStatus("Disabled. The original Caps Lock mapping has been restored.")
         return nil
@@ -87,7 +89,12 @@ extension AppDelegate {
     }
     var folderSelectionPanel: FolderPanel? {
         guard let panel = folderWindow, panel.isKeyWindow, panel.attachedSheet == nil,
-              let table = folderTable, panel.firstResponder === table else { return nil }
+              let table = folderTable else { return nil }
+        // The list or its search field (whose field editor has the focus while typing).
+        let searching = (panel.firstResponder as? NSTextView).map { editor in
+            folderList?.searchField.map { editor.delegate === $0 } ?? false
+        } ?? false
+        guard panel.firstResponder === table || searching else { return nil }
         return panel
     }
     enum KeyboardContext {
@@ -131,6 +138,12 @@ extension AppDelegate {
             return Unmanaged.passUnretained(event)
         }
         let key = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        // macOS changing Caps Lock (its light coming on) reports a flags change that is
+        // not a modifier key being pressed. It must not count as one, or a long Caps hold
+        // would turn into a chord and its Caps Lock would be undone.
+        if type == .flagsChanged && (key == KeyCode.capsLock || !KeyboardState.isModifierKey(key)) {
+            return Unmanaged.passUnretained(event)
+        }
         // Secure Event Input (password fields, Terminal's Secure Keyboard Entry) hides
         // events, including releases, from the tap. The first event after such a quiet
         // period is checked against the hardware, so a hidden release cannot leave a key
@@ -174,7 +187,6 @@ extension AppDelegate {
         let capsWasHeld = state.held
         let result: KeyboardState.Result
         if type == .flagsChanged {
-            if key == KeyCode.capsLock { return Unmanaged.passUnretained(event) }
             let pressed = KeyboardState.modifierPressed(key: key, flags: event.flags.rawValue)
             result = state.modifierChanged(otherModifier: otherModifier, commandModifier: commandModifier,
                                            folderSelectionActive: panel != nil, shortcutsEnabled: shortcutsEnabled,
@@ -184,22 +196,27 @@ extension AppDelegate {
                                  repeated: repeated, bound: bound, prefix: prefix, comboBound: comboBound,
                                  windowKey: windowKey,
                                  otherModifier: otherModifier, commandModifier: commandModifier,
-                                 folderSelectionActive: panel != nil, folderCount: folders.count,
-                                 shortcutsEnabled: shortcutsEnabled)
+                                 folderSelectionActive: panel != nil,
+                                 // Rows shown, so a search with no matches opens nothing.
+                                 folderCount: folderList?.table.numberOfRows ?? folders.count,
+                                 shortcutsEnabled: shortcutsEnabled,
+                                 // Event time: names the Caps hold.
+                                 time: event.timestamp > 0 ? TimeInterval(event.timestamp) / 1_000_000_000 : now)
         }
         updateLaunchHint(shortcutsEnabled: shortcutsEnabled)
+        // While a field records, Caps is input to the field, not a Caps Lock toggle.
+        let recordingWithCaps = (window?.firstResponder as? KeyRecorder).map { $0.recording && $0.recordsWithCaps } ?? false
+        updateCapsHUD(shortcutsEnabled: shortcutsEnabled, recordingWithCaps: recordingWithCaps, openingFolders: result.showFolders)
         if let swallowed = routeCapsRecording(type, key: key, capsWasHeld: capsWasHeld, repeated: repeated, flags: event.flags) {
             if swallowed { return nil }
         }
         if result.showFolders {
             afterKeyEvent { [weak self] in self?.showFolders() }
         }
-        // While a field records, Caps is input to the field, not a Caps Lock toggle.
-        let recordingWithCaps = (window?.firstResponder as? KeyRecorder).map { $0.recording && $0.recordsWithCaps } ?? false
         if result.tap && !recordingWithCaps {
             afterKeyEvent { [weak self] in
                 guard let self = self else { return }
-                do { try self.standaloneCaps() }
+                do { try self.replayCapsTap() }
                 catch { self.failKeyboard(error: error) }
             }
         }
@@ -227,6 +244,53 @@ extension AppDelegate {
         // Other keys go to the focused view's native navigation and editing commands.
         if result.stripCommandModifier { event.flags.remove(.maskCommand) }
         return result.swallow ? nil : Unmanaged.passUnretained(event)
+    }
+    // Called for every key event after the launch hint. One HUD at a time, in the
+    // pill's place: the keys pressed so far ("⇪ M W"); or, when they select an app, the
+    // app card (updateLaunchHint) with the keys on top, while the pill hides. Caps held
+    // alone shows nothing: the keyboard light shows Caps Lock. Caps + Space hides the
+    // pill at once as the Folders panel opens.
+    func updateCapsHUD(shortcutsEnabled: Bool, recordingWithCaps: Bool, openingFolders: Bool) {
+        if openingFolders {
+            // The Folders panel replaces the pill at once.
+            capsHUDActive = false
+            afterKeyEvent { [weak self] in self?.capsHUD.hide(animated: false) }
+            return
+        }
+        enum Display { case keys(String), app(String), hidden }
+        let display: Display
+        // The launch confirmation needs no Caps hint, and the open Folders panel has its
+        // search field where the pill would be; the long press still works in both.
+        // A window action shows its own preview; the Caps HUD gets out of the way.
+        if recordingWithCaps || showingLaunchConfirmation || folderWindow?.isVisible == true || state.windowGesture {
+            display = .hidden
+        } else if shortcutsEnabled && state.showsKeyHint {
+            let keys = state.pressedKeys.map { keyName($0) ?? "?" }.joined(separator: " ")
+            // A match turns the pill into the app card, its keys in the accent color.
+            display = launchHint.target != nil ? .app(keys) : .keys(keys)
+        } else {
+            display = .hidden
+        }
+        if case .hidden = display {
+            guard capsHUDActive else { return }
+            capsHUDActive = false
+            afterKeyEvent { [weak self] in self?.capsHUD.hide() }
+            return
+        }
+        capsHUDActive = true
+        afterKeyEvent { [weak self] in
+            guard let self = self else { return }
+            switch display {
+            case .keys(let keys):
+                self.capsHUD.showKeys(keys)
+            case .app(let keys):
+                // The app card takes the pill's place and carries the keys.
+                self.launchHint.keys = keys
+                self.capsHUD.hide(animated: false)
+            case .hidden:
+                break
+            }
+        }
     }
     // App List fields are recorded the way shortcuts are used: keys pressed while Caps
     // is held go to the recording field (and not to the window), and releasing Caps

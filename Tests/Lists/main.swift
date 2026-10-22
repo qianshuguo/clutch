@@ -87,6 +87,64 @@ for (controller, expectedHint) in [(preferences.controller, false), (picker.cont
     expect(labels.contains("⇪1") == expectedHint, "only picker rows show Caps number hints")
     expect(controller.tableView(table, typeSelectStringFor: nil, row: 1) == "Second", "folder type selection uses display names")
 }
+// Folders search: the field filters the picker by name or path and selects the best match.
+let search = picker.controller
+let searchField = NSSearchField()
+search.searchField = searchField
+let fieldEditor = NSTextView()
+func typeSearch(_ text: String) {
+    searchField.stringValue = text
+    search.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: searchField))
+}
+expect(!pickerTable.allowsTypeSelect && preferencesTable.allowsTypeSelect, "only the picker replaces type selection with search")
+typeSearch("Se")
+expect(search.filter == "Se" && pickerTable.numberOfRows == 1 && search.folderIndex(forRow: 0) == 1,
+       "the search keeps folders whose name matches, ignoring case")
+expect(pickerTable.selectedRow == 0 && search.selectedFolderIndices == IndexSet(integer: 1), "the first match is selected and maps to its folder")
+let firstCell = search.tableView(pickerTable, viewFor: pickerTable.tableColumns[0], row: 0)!
+expect(firstCell.subviews.compactMap { ($0 as? NSTextField)?.stringValue }.contains("Second"), "filtered rows show their own folder")
+typeSearch("tmp")
+expect(pickerTable.numberOfRows == 1 && search.folderIndex(forRow: 0) == 0, "paths match too")
+typeSearch("nothing here")
+expect(pickerTable.numberOfRows == 0 && search.selectedFolderIndices.isEmpty, "no matches selects nothing")
+expect(search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+       && search.filter.isEmpty && searchField.stringValue.isEmpty && pickerTable.numberOfRows == 2,
+       "Escape clears the search first")
+expect(search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.moveDown(_:)))
+       && pickerTable.selectedRow == 1, "↓ in the field moves the list selection")
+expect(search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.moveDown(_:)))
+       && pickerTable.selectedRow == 1, "↓ stops at the last row")
+expect(search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.moveUp(_:)))
+       && pickerTable.selectedRow == 0, "↑ in the field moves the list selection")
+expect(!search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.deleteBackward(_:))),
+       "editing commands stay with the field")
+search.setFilter("Fi")
+expect(searchField.stringValue == "Fi", "setting the filter updates the field")
+search.setFilter("")
+search.searchField = nil
+print("PASS: Folders search field filters by name and path, maps rows, Escape/arrows")
+let ranked = [FolderEntry(name: "Kidocs", path: "/k"), FolderEntry(name: "Project Docs", path: "/p"),
+              FolderEntry(name: "Downloads", path: "/d"), FolderEntry(name: "Photo Dump", path: "/docs/x"),
+              FolderEntry(name: "Docker", path: "/r")]
+expect(FolderListController.ordered(ranked, query: "doc") == [1, 4, 0, 3],
+       "word starts first (in list order), then names containing it, then paths")
+expect(FolderListController.ordered(ranked, query: "pd") == [1, 3],
+       "initials of separate words match after word starts")
+expect(FolderListController.ordered(ranked, query: "d") == [1, 2, 3, 4, 0], "one letter matches word starts first")
+expect(FolderListController.ordered([FolderEntry(name: "MyProject", path: "/m"), FolderEntry(name: "Résumé", path: "/r")], query: "proj") == [0],
+       "camel-case humps start words")
+expect(FolderListController.ordered([FolderEntry(name: "Résumé", path: "/r")], query: "resu") == [0], "accents are ignored")
+let chinese = [FolderEntry(name: "下载", path: "/x"), FolderEntry(name: "文件夹", path: "/w"),
+               FolderEntry(name: "我的文档", path: "/d")]
+expect(FolderListController.ordered(chinese, query: "wenjian") == [1], "pinyin syllables match Chinese names")
+expect(FolderListController.ordered(chinese, query: "wen'jian") == [1] && FolderListController.ordered(chinese, query: "wen jian") == [1],
+       "the input method's apostrophes and spaces are ignored")
+expect(FolderListController.ordered(chinese, query: "jian") == [1], "any syllable starts a word")
+expect(FolderListController.ordered(chinese, query: "wjj") == [1], "syllable initials match")
+expect(FolderListController.ordered(chinese, query: "w").first == 1 || FolderListController.ordered(chinese, query: "w").first == 2,
+       "one letter matches syllable starts")
+expect(FolderListController.ordered(chinese, query: "文件") == [1], "Chinese characters still match directly")
+print("PASS: Folders search ranks word starts, initials, then contains")
 
 let applications = ApplicationListController(owner: owner)
 owner.configureList(applications.table, width: AppDelegate.preferenceSize.width, columnID: "app")

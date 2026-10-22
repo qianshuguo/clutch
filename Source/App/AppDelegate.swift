@@ -41,6 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let windowManager = WindowManager()
     let windowPreviewOverlay = WindowPreviewOverlay()
     let launchHint = LaunchHintOverlay()
+    let capsHUD = CapsHUD()
+    // Whether the key handler last asked the Caps HUD to show something.
+    var capsHUDActive = false
     var windowPreview: WindowPreviewSession?
     var windowShortcuts = WindowShortcuts.load()
     var windowShortcutList: WindowShortcutListController?

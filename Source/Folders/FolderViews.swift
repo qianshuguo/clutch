@@ -71,6 +71,8 @@ func handleFolderKey(_ event: NSEvent, window: NSWindow?, openSelection: (() -> 
 
 final class FolderTableView: NSTableView {
     var openSelection: (() -> Void)?
+    // The picker's search: returns true when the key edited the search.
+    var searchKey: ((NSEvent) -> Bool)?
     override func menu(for event: NSEvent) -> NSMenu? {
         let row = row(at: convert(event.locationInWindow, from: nil))
         guard row >= 0 else { return nil }
@@ -87,6 +89,7 @@ final class FolderTableView: NSTableView {
     }
     override func flagsChanged(with event: NSEvent) { window?.flagsChanged(with: event) }
     override func keyDown(with event: NSEvent) {
+        if searchKey?(event) == true { return }
         if !handleFolderKey(event, window: window, openSelection: openSelection) {
             super.keyDown(with: event)
         }

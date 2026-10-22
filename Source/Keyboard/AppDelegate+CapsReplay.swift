@@ -3,10 +3,6 @@ import IOKit.hidsystem
 
 enum CapsReplay {
     static let marker: Int64 = 0x4879706572436170
-    // Gap between the replayed press and release. A zero-length press made
-    // Electron apps (Claude) switch the input source and then switch it back
-    // about 40 ms later. Kept well below a long press, so it is still a tap.
-    static let pressDuration: TimeInterval = 0.05
 
     // Caps uses an auxiliary system-key event, rather than an ordinary letter
     // key event. Leave input-source selection and Caps state to macOS.
@@ -35,8 +31,17 @@ enum CapsReplay {
     }
 }
 
+extension CapsReplay {
+    // A replayed short press: macOS switches input sources (or, if Caps Lock happens to
+    // be on, turns it off). Long enough to look like a real tap (a zero-length press
+    // made Electron apps switch the input source and switch it back), far below a
+    // long press. Clutch never turns Caps Lock on: disable Clutch to use Caps Lock.
+    static let tapDuration: TimeInterval = 0.1
+}
+
 extension AppDelegate {
-    func standaloneCaps() throws {
+    // Caps pressed and released alone: a Caps tap for macOS.
+    func replayCapsTap() throws {
         guard tap != nil, wantsEnabled else { return }
         // Construct both transitions before posting so failure cannot leave a
         // synthetic key-down without its matching release.
@@ -45,9 +50,7 @@ extension AppDelegate {
         CapsReplay.post(down)
         // The release is always posted, even if Clutch is disabled meanwhile.
         // Common run-loop modes keep it on time during menus and modal panels.
-        let release = Timer(timeInterval: CapsReplay.pressDuration, repeats: false) { _ in
-            CapsReplay.post(up)
-        }
+        let release = Timer(timeInterval: CapsReplay.tapDuration, repeats: false) { _ in CapsReplay.post(up) }
         RunLoop.main.add(release, forMode: .common)
     }
 }

@@ -7,20 +7,29 @@ enum LaunchHUD {
     static let size = NSSize(width: 148, height: 148)
     static let cornerRadius: CGFloat = 20
 
-    // The exact center of the screen with the key window (menu bar and Dock included).
+    // In the Caps pill's place, extending down from its top edge: when keys select an
+    // app, the pill becomes this card.
     static func frame() -> NSRect {
-        let screen = (NSScreen.main ?? NSScreen.screens.first)?.frame ?? .zero
-        return NSRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
-                      width: size.width, height: size.height)
+        let pill = CapsHUDGeometry.keyFrame()
+        return NSRect(x: pill.minX, y: pill.maxY - size.height, width: size.width, height: size.height)
     }
 }
 
 // Two stages at one fixed size.
-// Hint (Caps held): a large icon over the app's name.
+// Hint (Caps held): the keys pressed ("⇪ M W") on top, the app's icon and name below
+// (without keys, a large icon over the name).
 // Confirmation (Caps released, app not running): a smaller icon over the same name,
 // with "⎋ Cancel" in the bottom-left corner and "↩ Open" in the bottom-right.
 final class LaunchHUDView: NSVisualEffectView {
     private let iconView = NSImageView()
+    // The keys row: the same ⇪ and spacing as the Caps pill.
+    private let keysSymbol = NSImageView()
+    private let keysLabel = NSTextField(labelWithString: "")
+    private static let keysFont = NSFont.systemFont(ofSize: 15, weight: .semibold)
+    private static let keysGap: CGFloat = 6
+    private static let keysRowY: CGFloat = 116
+    private static let keysRowHeight: CGFloat = 20
+    private lazy var keysSymbolInk: ClosedRange<CGFloat> = keysSymbol.image?.inkHorizontalRange() ?? 0...18
     private let nameLabel = NSTextField(labelWithString: "")
     private let cancelKey = NSTextField(labelWithString: "⎋ Cancel")
     private let openKey = NSTextField(labelWithString: "↩ Open")
@@ -76,7 +85,13 @@ final class LaunchHUDView: NSVisualEffectView {
         openKey.frame = NSRect(x: size.width - Self.keyInset - openSize.width,
                                y: Self.keyBottom - max(0, openSize.height - cancelSize.height),
                                width: openSize.width, height: openSize.height)
-        [iconView, nameLabel, cancelKey, openKey].forEach { addSubview($0) }
+        keysSymbol.image = NSImage(systemSymbolName: "capslock", accessibilityDescription: "Caps Lock")?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .medium))
+        keysSymbol.imageScaling = .scaleProportionallyUpOrDown
+        keysSymbol.contentTintColor = .labelColor
+        keysLabel.maximumNumberOfLines = 1
+        keysLabel.lineBreakMode = .byClipping
+        [iconView, nameLabel, cancelKey, openKey, keysSymbol, keysLabel].forEach { addSubview($0) }
         setConfirming(false, animated: false)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -89,11 +104,41 @@ final class LaunchHUDView: NSVisualEffectView {
         get { nameLabel.stringValue }
         set { nameLabel.stringValue = newValue }
     }
+    // "M W": shown after ⇪ on top. Empty hides the row and enlarges the icon.
+    var keys: String = "" {
+        didSet {
+            guard keys != oldValue else { return }
+            // A match: the keys in the accent color.
+            let line = NSMutableAttributedString(string: keys, attributes: [.font: Self.keysFont, .foregroundColor: NSColor.controlAccentColor])
+            let spaceWidth = (" " as NSString).size(withAttributes: [.font: Self.keysFont]).width
+            for (offset, character) in keys.utf16.enumerated() where character == 32 {
+                line.addAttribute(.kern, value: Self.keysGap - spaceWidth, range: NSRange(location: offset, length: 1))
+            }
+            keysLabel.attributedStringValue = line
+            keysLabel.sizeToFit()
+            // Laid out by the drawn glyph, as in the Caps pill, so the gaps are even.
+            let symbolHeight: CGFloat = 18
+            let glyph = keysSymbol.image.map { $0.glyphLayout(height: symbolHeight, ink: keysSymbolInk) }
+                ?? (glyphWidth: symbolHeight, imageFrame: NSRect(x: 0, y: 0, width: symbolHeight, height: symbolHeight))
+            let symbolWidth = glyph.glyphWidth.rounded()
+            let textWidth = min(keysLabel.frame.width, LaunchHUD.size.width - Self.labelInset * 2 - symbolWidth - Self.keysGap)
+            let x = ((LaunchHUD.size.width - symbolWidth - Self.keysGap - textWidth) / 2).rounded()
+            let midY = Self.keysRowY + Self.keysRowHeight / 2
+            keysSymbol.frame = glyph.imageFrame.offsetBy(dx: x, dy: (midY - symbolHeight / 2).rounded())
+            keysLabel.frame = NSRect(x: x + symbolWidth + Self.keysGap, y: (midY - keysLabel.frame.height / 2).rounded(),
+                                     width: textWidth, height: keysLabel.frame.height)
+            setConfirming(false, animated: false)
+        }
+    }
 
     func setConfirming(_ confirming: Bool, animated: Bool) {
         let width = LaunchHUD.size.width
-        let iconSize: CGFloat = confirming ? 72 : 88
-        let iconFrame = NSRect(x: (width - iconSize) / 2, y: confirming ? 56 : 42, width: iconSize, height: iconSize)
+        // With keys on top, the hint's icon is smaller to leave the row room.
+        let showsKeys = !confirming && !keys.isEmpty
+        let iconSize: CGFloat = confirming ? 72 : showsKeys ? 64 : 88
+        let iconY: CGFloat = confirming ? 56 : showsKeys ? 44 : 42
+        let iconFrame = NSRect(x: (width - iconSize) / 2, y: iconY, width: iconSize, height: iconSize)
+        let keysAlpha: CGFloat = showsKeys ? 1 : 0
         let labelFrame = NSRect(x: Self.labelInset, y: confirming ? 30 : 14,
                                 width: width - Self.labelInset * 2, height: 18)
         guard animated else {
@@ -101,6 +146,8 @@ final class LaunchHUDView: NSVisualEffectView {
             nameLabel.frame = labelFrame
             cancelKey.alphaValue = confirming ? 1 : 0
             openKey.alphaValue = confirming ? 1 : 0
+            keysSymbol.alphaValue = keysAlpha
+            keysLabel.alphaValue = keysAlpha
             return
         }
         NSAnimationContext.runAnimationGroup { context in
@@ -111,6 +158,8 @@ final class LaunchHUDView: NSVisualEffectView {
             self.nameLabel.animator().frame = labelFrame
             self.cancelKey.animator().alphaValue = confirming ? 1 : 0
             self.openKey.animator().alphaValue = confirming ? 1 : 0
+            self.keysSymbol.animator().alphaValue = keysAlpha
+            self.keysLabel.animator().alphaValue = keysAlpha
         }
     }
 }
@@ -168,6 +217,8 @@ final class LaunchConfirmation: NSObject {
         let content = LaunchHUDView()
         content.icon = icon
         content.name = appName
+        // Starts as an exact copy of the hint, keys row included, then animates on.
+        content.keys = hint?.keys ?? ""
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
