@@ -104,7 +104,7 @@ expect(pickerTable.selectedRow == 0 && search.selectedFolderIndices == IndexSet(
 let firstCell = search.tableView(pickerTable, viewFor: pickerTable.tableColumns[0], row: 0)!
 expect(firstCell.subviews.compactMap { ($0 as? NSTextField)?.stringValue }.contains("Second"), "filtered rows show their own folder")
 typeSearch("tmp")
-expect(pickerTable.numberOfRows == 1 && search.folderIndex(forRow: 0) == 0, "paths match too")
+expect(pickerTable.numberOfRows == 0, "paths do not match")
 typeSearch("nothing here")
 expect(pickerTable.numberOfRows == 0 && search.selectedFolderIndices.isEmpty, "no matches selects nothing")
 expect(search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.cancelOperation(_:)))
@@ -135,12 +135,12 @@ typeSearch("Fi")
 expect(pickerTable.numberOfRows == 1 && search.filter == "Fi", "ordinary search still filters after Caps navigation")
 search.setFilter("")
 search.searchField = nil
-print("PASS: Folders search field filters by name and path, maps rows, Escape/arrows")
+print("PASS: Folders search field filters by name, maps rows, Escape/arrows")
 let ranked = [FolderEntry(name: "Kidocs", path: "/k"), FolderEntry(name: "Project Docs", path: "/p"),
               FolderEntry(name: "Downloads", path: "/d"), FolderEntry(name: "Photo Dump", path: "/docs/x"),
               FolderEntry(name: "Docker", path: "/r")]
-expect(FolderListController.ordered(ranked, query: "doc") == [1, 4, 0, 3],
-       "word starts first (in list order), then names containing it, then paths")
+expect(FolderListController.ordered(ranked, query: "doc") == [1, 4, 0],
+       "word starts first (in list order), then names containing it; paths never match")
 expect(FolderListController.ordered(ranked, query: "pd") == [1, 3],
        "initials of separate words match after word starts")
 expect(FolderListController.ordered(ranked, query: "d") == [1, 2, 3, 4, 0], "one letter matches word starts first")

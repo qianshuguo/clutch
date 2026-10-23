@@ -3,9 +3,8 @@
 build/
 # 本地构建出的 .app（由 build.command 生成）
 Clutch.app/
-HyperCaps.app/
-HyperKey.app/
 *.log
+Clutch.app.zip
 
 # ===== macOS =====
 .DS_Store

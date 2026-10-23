@@ -55,7 +55,7 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
     // How well a folder matches the search, best first, ignoring case and accents; nil
     // when it does not match. 0: a word of the name starts with the search ("doc" →
     // "My Documents"). 1: the search is the initials of words of the name, in order
-    // ("pd" → "Project Docs"). 2: the name contains it. 3: the path contains it.
+    // ("pd" → "Project Docs"). 2: the name contains it. The path is not searched.
     // Chinese characters also match by their pinyin, one syllable per word ("文件夹":
     // "wen", "wenjian", "jian", initials "wjj"), with the input method's spaces and
     // apostrophes ignored ("wen'jian").
@@ -70,9 +70,7 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
                 best = min(best ?? byPinyin, byPinyin)
             }
         }
-        if let best = best { return best }
-        if fold(folder.path).contains(search) { return 3 }
-        return nil
+        return best
     }
     // 0: a word starts with the search; 1: word initials spell it; 2: contains it.
     private static func rank(words folded: [String], starts: [Int], search: String) -> Int? {
