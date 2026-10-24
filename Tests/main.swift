@@ -13,10 +13,10 @@ _ = state.route(key: 79, down: true, repeated: true, bound: false)
 expect(releaseCaps().tap && !releaseCaps().tap, "holding/repeating Caps requests system replay only once on release")
 capsDown()
 let launch = state.route(key: 3, down: true, repeated: false, bound: true)
-expect(launch.swallow && launch.launch == nil, "bound chord is consumed and waits for Caps release")
-expect(state.route(key: 3, down: true, repeated: true, bound: true).launch == nil, "no repeated launches")
+expect(launch.swallow && launch.launchKeys == nil, "bound chord is consumed and waits for Caps release")
+expect(state.route(key: 3, down: true, repeated: true, bound: true).launchKeys == nil, "no repeated launches")
 let launchRelease = releaseCaps()
-expect(!launchRelease.tap && launchRelease.launch == 3, "Caps release runs the shortcut and never switches input")
+expect(!launchRelease.tap && launchRelease.launchKeys == [3], "Caps release runs the shortcut and never switches input")
 expect(state.route(key: 3, down: false, repeated: false, bound: true).swallow, "consume keyup after Caps released first")
 expect(!state.route(key: 3, down: true, repeated: false, bound: true).swallow, "typing returns to normal")
 state.reset()
@@ -52,7 +52,7 @@ expect(longPress.tap, "a long press alone is still a standalone Caps press")
 capsDown(at: 300)
 _ = state.route(key: 3, down: true, repeated: false, bound: true)
 let longChord = releaseCaps(at: 300 + longHold * 4)
-expect(!longChord.tap && longChord.launch == 3, "a long Caps + key hold runs the shortcut, not a Caps press")
+expect(!longChord.tap && longChord.launchKeys == [3], "a long Caps + key hold runs the shortcut, not a Caps press")
 _ = state.route(key: 3, down: false, repeated: false, bound: true)
 capsDown(at: 400)
 _ = state.modifierChanged(otherModifier: true)
@@ -67,11 +67,13 @@ expect(!releaseCaps(at: 600 + longHold).tap, "a missed release never becomes a C
 // Key hint: every key pressed during the hold, in order.
 capsDown(at: 700)
 _ = state.route(key: 46, down: true, repeated: false, bound: false, prefix: true)
-_ = state.route(key: 13, down: true, repeated: false, bound: false, comboBound: true)
+_ = state.route(key: 13, down: true, repeated: false, bound: true)
 _ = state.route(key: 13, down: true, repeated: true, bound: false)
 expect(state.pressedKeys == [46, 13] && state.showsKeyHint, "the key hint lists M then W, without repeats")
 _ = state.route(key: 3, down: true, repeated: false, bound: true)
-expect(state.pressedKeys == [46, 13], "the key hint keeps only the first two keys")
+expect(state.pressedKeys == [46, 13, 3], "the key hint lists up to three keys")
+_ = state.route(key: 7, down: true, repeated: false, bound: false)
+expect(state.pressedKeys == [46, 13, 3], "the key hint keeps only the first three keys")
 _ = releaseCaps(at: 701)
 expect(state.pressedKeys.isEmpty && !state.showsKeyHint, "releasing Caps clears the key hint")
 state.reset()
@@ -86,7 +88,7 @@ let escaped = state.route(key: 53, down: true, repeated: false, bound: false)
 expect(escaped.swallow && !state.showsKeyHint && state.launchCandidate == nil, "Escape is consumed and hides the key hint")
 expect(state.route(key: 46, down: true, repeated: false, bound: true).swallow, "keys after Escape stay consumed until Caps release")
 let afterEscape = releaseCaps(at: 900 + longHold)
-expect(afterEscape.launch == nil && !afterEscape.tap, "releasing Caps after Escape does nothing")
+expect(afterEscape.launchKeys == nil && !afterEscape.tap, "releasing Caps after Escape does nothing")
 expect(state.route(key: 53, down: false, repeated: false, bound: false).swallow, "the Escape release is consumed")
 _ = state.route(key: 3, down: false, repeated: false, bound: true)
 _ = state.route(key: 46, down: false, repeated: false, bound: true)
@@ -118,49 +120,50 @@ expect(KeyboardState.isModifierKey(56) && KeyboardState.isModifierKey(55) && !Ke
        "a Caps Lock flags change is not a modifier press")
 state.reset()
 print("PASS: earlier key/modifier releases keep standalone Caps; new presses still cancel")
-// Default app keys plus custom letter, number, and Return mappings.
-for key: UInt16 in [1, 3, 17, 8, 9, 0, 18, 36] {
+// Default app keys plus custom letter and number mappings (Return is reserved).
+for key: UInt16 in [1, 3, 17, 8, 9, 0, 18] {
     state.reset()
     capsDown()
     for _ in 0..<4 {
-        expect(state.route(key: key, down: true, repeated: false, bound: true).launch == nil, "a mapped press waits for Caps release")
-        expect(state.route(key: key, down: true, repeated: true, bound: true).launch == nil, "holding a mapped key does nothing more")
+        expect(state.route(key: key, down: true, repeated: false, bound: true).launchKeys == nil, "a mapped press waits for Caps release")
+        expect(state.route(key: key, down: true, repeated: true, bound: true).launchKeys == nil, "holding a mapped key does nothing more")
         expect(state.route(key: key, down: false, repeated: false, bound: true).swallow, "each mapped release is consumed")
     }
     let repeatedTaps = releaseCaps()
-    expect(repeatedTaps.launch == nil && !repeatedTaps.tap, "tapping a key several times in one Caps hold matches no one-key shortcut")
+    expect(repeatedTaps.launchKeys != [key] && !repeatedTaps.tap, "tapping a key several times in one Caps hold matches no one-key shortcut")
     for _ in 0..<3 {
         capsDown()
         _ = state.route(key: key, down: true, repeated: false, bound: true)
         _ = state.route(key: key, down: false, repeated: false, bound: true)
         let again = releaseCaps()
-        expect(again.launch == key && !again.tap, "each Caps + key requests activation/window cycling")
+        expect(again.launchKeys == [key] && !again.tap, "each Caps + key requests activation/window cycling")
     }
 }
 state.reset()
 print("PASS: repeated app shortcuts across default and custom mappings")
 // Two-key shortcuts: Caps + M + W (M = 46, W = 13). Caps release decides, so M may
-// also open an app by itself.
+// also open an app by itself. `bound`: the keys so far plus this one are a shortcut;
+// `prefix`: a longer shortcut starts with them.
 func comboRoute(_ key: UInt16, down: Bool = true, repeated: Bool = false, bound: Bool = false,
-                prefix: Bool = false, combo: Bool = false) -> KeyboardState.Result {
-    state.route(key: key, down: down, repeated: repeated, bound: bound, prefix: prefix, comboBound: combo)
+                prefix: Bool = false) -> KeyboardState.Result {
+    state.route(key: key, down: down, repeated: repeated, bound: bound, prefix: prefix)
 }
 for mWasReleasedFirst in [false, true] {
     state.reset()
     capsDown()
     let first = comboRoute(46, bound: true, prefix: true)
-    expect(first.swallow && first.launch == nil && state.pendingKey == 46, "the first key waits for Caps release or a second key")
+    expect(first.swallow && first.launchKeys == nil && state.pendingKeys == [46], "the first key waits for Caps release or a second key")
     expect(comboRoute(46, repeated: true, bound: true, prefix: true).swallow, "first key repeats are consumed")
     if mWasReleasedFirst {
-        expect(comboRoute(46, down: false).swallow && state.pendingKey == 46, "releasing the first key keeps waiting while Caps is held")
+        expect(comboRoute(46, down: false).swallow && state.pendingKeys == [46], "releasing the first key keeps waiting while Caps is held")
     }
-    let second = comboRoute(13, combo: true)
-    expect(second.swallow && second.launch == nil && state.pendingKey == nil, "the second key is consumed")
-    expect(comboRoute(13, repeated: true, combo: true).swallow, "second key repeats are consumed")
+    let second = comboRoute(13, bound: true)
+    expect(second.swallow && second.launchKeys == nil && state.pendingKeys == [46, 13], "the second key is consumed and could still start a longer shortcut")
+    expect(comboRoute(13, repeated: true, bound: true).swallow, "second key repeats are consumed")
     if !mWasReleasedFirst { expect(comboRoute(46, down: false).swallow, "the first key release is consumed") }
     expect(comboRoute(13, down: false).swallow, "the second key release is consumed")
     let capsUp = releaseCaps()
-    expect(capsUp.launch == 46 && capsUp.launchSecond == 13 && !capsUp.tap, "Caps release runs Caps + M + W, not Caps + M")
+    expect(capsUp.launchKeys == [46, 13] && !capsUp.tap, "Caps release runs Caps + M + W, not Caps + M")
 }
 // The on-screen hint follows what releasing Caps would run.
 state.reset()
@@ -168,14 +171,14 @@ capsDown()
 expect(state.launchCandidate == nil, "Caps alone shows no app")
 _ = comboRoute(46, prefix: true)
 expect(state.launchCandidate == nil, "a key that only starts two-key shortcuts shows no app yet")
-_ = comboRoute(13, combo: true)
-expect(state.launchCandidate.map { $0.first == 46 && $0.second == 13 } == true, "Caps + M + W shows its app")
+_ = comboRoute(13, bound: true)
+expect(state.launchCandidate == [46, 13], "Caps + M + W shows its app")
 _ = releaseCaps()
 expect(state.launchCandidate == nil, "releasing Caps hides the hint")
 _ = comboRoute(46, down: false); _ = comboRoute(13, down: false)
 capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
-expect(state.launchCandidate.map { $0.first == 46 && $0.second == nil } == true, "Caps + M shows its own app")
+expect(state.launchCandidate == [46], "Caps + M shows its own app")
 _ = comboRoute(11)
 expect(state.launchCandidate == nil, "an unmatched key hides the hint")
 _ = releaseCaps(); _ = comboRoute(46, down: false); _ = comboRoute(11, down: false)
@@ -189,77 +192,192 @@ state.reset()
 capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
 let alone = releaseCaps()
-expect(alone.launch == 46 && alone.launchSecond == nil && !alone.tap, "Caps + M alone still opens its own app")
+expect(alone.launchKeys == [46] && !alone.tap, "Caps + M alone still opens its own app")
 _ = comboRoute(46, down: false)
 capsDown()
 _ = comboRoute(46, prefix: true)
-expect(releaseCaps().launch == nil, "a key that only starts two-key shortcuts runs nothing alone")
+expect(releaseCaps().launchKeys == nil, "a key that only starts two-key shortcuts runs nothing alone")
 _ = comboRoute(46, down: false)
 capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
 _ = comboRoute(46, down: false)
-_ = comboRoute(46, bound: true, prefix: true, combo: true)
+_ = comboRoute(46, bound: true)
 let doubled = releaseCaps()
-expect(doubled.launch == 46 && doubled.launchSecond == 46, "Caps + M + M uses the same key twice")
+expect(doubled.launchKeys == [46, 46], "Caps + M + M uses the same key twice")
 _ = comboRoute(46, down: false)
 capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
 _ = comboRoute(46, down: false)
-_ = comboRoute(46, bound: true, prefix: true, combo: false)
+_ = comboRoute(46)
 _ = comboRoute(46, down: false)
 let tappedTwice = releaseCaps()
-expect(tappedTwice.launch == nil, "without Caps + M + M, tapping M twice runs nothing")
+expect(tappedTwice.launchKeys == nil, "without Caps + M + M, tapping M twice runs nothing")
 // Caps + C C C C L is not Caps + C + L: the keys must match exactly.
 capsDown()
 _ = comboRoute(8, bound: true, prefix: true)
 _ = comboRoute(8, down: false)
 for _ in 0..<3 {
-    _ = comboRoute(8, bound: true, prefix: true, combo: false)
+    _ = comboRoute(8)
     _ = comboRoute(8, down: false)
 }
-_ = comboRoute(37, bound: false, combo: true)
+_ = comboRoute(37, bound: true)
 _ = comboRoute(37, down: false)
 let extraPresses = releaseCaps()
-expect(extraPresses.launch == nil, "extra presses before the second key run nothing")
+expect(extraPresses.launchKeys == nil, "extra presses before the second key run nothing")
 capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
-let unmatched = comboRoute(11, bound: true)
-expect(unmatched.swallow && unmatched.launch == nil, "a key that completes no shortcut is consumed")
-expect(releaseCaps().launch == nil, "an unmatched second key means nothing runs")
+let unmatched = comboRoute(11)
+expect(unmatched.swallow && unmatched.launchKeys == nil, "a key that completes no shortcut is consumed")
+expect(releaseCaps().launchKeys == nil, "an unmatched second key means nothing runs")
 _ = comboRoute(46, down: false); _ = comboRoute(11, down: false)
 capsDown()
 _ = comboRoute(46, prefix: true)
-_ = comboRoute(13, combo: true)
+_ = comboRoute(13, bound: true)
 _ = comboRoute(7)
-expect(releaseCaps().launch == nil, "a third key means nothing runs")
+expect(releaseCaps().launchKeys == nil, "a third key that completes no shortcut means nothing runs")
 _ = comboRoute(46, down: false); _ = comboRoute(13, down: false); _ = comboRoute(7, down: false)
 capsDown()
-expect(comboRoute(11).swallow && state.pendingKey == nil, "keys no shortcut uses are consumed")
+expect(comboRoute(11).swallow && state.pendingKeys == nil, "keys no shortcut uses are consumed")
 _ = comboRoute(11, down: false)
 _ = releaseCaps()
 capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
 _ = state.modifierChanged(otherModifier: true)
-expect(releaseCaps().launch == nil, "a modifier during the hold cancels the shortcut")
+expect(releaseCaps().launchKeys == nil, "a modifier during the hold cancels the shortcut")
 state.reset()
 capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
 state.cancelGesture()
-expect(state.pendingKey == nil && releaseCaps().launch == nil, "focus changes cancel the shortcut")
+expect(state.pendingKeys == nil && releaseCaps().launchKeys == nil, "focus changes cancel the shortcut")
 state.reset()
 capsDown()
 _ = comboRoute(46, bound: true, prefix: true)
 state.capsReleaseMissed()
-expect(state.pendingKey == nil && !state.held && releaseCaps().launch == nil, "a hidden Caps release runs nothing")
+expect(state.pendingKeys == nil && !state.held && releaseCaps().launchKeys == nil, "a hidden Caps release runs nothing")
 state.reset()
-expect(!comboRoute(46, bound: true, prefix: true).swallow && state.pendingKey == nil, "without Caps the key types normally")
+expect(!comboRoute(46, bound: true, prefix: true).swallow && state.pendingKeys == nil, "without Caps the key types normally")
 capsDown()
 _ = state.route(key: 123, down: true, repeated: false, bound: true, prefix: true, windowKey: true)
-expect(state.pendingKey == nil, "a window key never starts a two-key shortcut")
+expect(state.pendingKeys == nil, "a window key never starts a two-key shortcut")
 let windowFirst = releaseCaps()
-expect(windowFirst.window == 123 && windowFirst.launch == nil, "window keys keep precedence over app shortcuts")
+expect(windowFirst.window == 123 && windowFirst.launchKeys == nil, "window keys keep precedence over app shortcuts")
 state.reset()
 print("PASS: two-key shortcuts on Caps release, the same key twice, one-key and two-key shortcuts on one key, cancellation, precedence")
+// Three-key shortcuts: Caps + M + W + E (E = 14).
+state.reset()
+capsDown()
+_ = comboRoute(46, prefix: true)
+_ = comboRoute(13, prefix: true)
+expect(state.pendingKeys == [46, 13] && state.launchCandidate == nil, "M W that only starts M W E waits for a third key")
+_ = comboRoute(14, bound: true)
+expect(state.pendingKeys == nil && state.launchCandidate == [46, 13, 14], "Caps + M + W + E shows its app")
+let threeKeys = releaseCaps()
+expect(threeKeys.launchKeys == [46, 13, 14] && !threeKeys.tap, "Caps release runs Caps + M + W + E")
+state.reset()
+capsDown()
+_ = comboRoute(46, prefix: true)
+_ = comboRoute(13, bound: true, prefix: true)
+expect(state.launchCandidate == [46, 13], "M W can open its own app and also start M W E")
+expect(releaseCaps().launchKeys == [46, 13], "releasing Caps after M W runs Caps + M + W")
+state.reset()
+capsDown()
+_ = comboRoute(46, prefix: true)
+_ = comboRoute(13, prefix: true)
+expect(releaseCaps().launchKeys == nil, "keys that only start a longer shortcut run nothing")
+state.reset()
+capsDown()
+_ = comboRoute(46, prefix: true)
+_ = comboRoute(13, prefix: true)
+_ = comboRoute(14, bound: true)
+expect(comboRoute(7, bound: true).swallow, "a fourth key is consumed")
+expect(comboRoute(8, bound: true, prefix: true).swallow, "a fifth key is consumed")
+expect(state.launchCandidate == [46, 13, 14] && state.pressedKeys == [46, 13, 14],
+       "keys after the third are ignored")
+expect(releaseCaps().launchKeys == [46, 13, 14], "releasing Caps still runs the three-key shortcut")
+state.reset()
+capsDown()
+_ = comboRoute(46, prefix: true)
+_ = comboRoute(13, prefix: true)
+_ = comboRoute(11)
+_ = comboRoute(14, bound: true)
+expect(releaseCaps().launchKeys == nil, "an unmatched key among the first three still means nothing runs")
+state.reset()
+capsDown()
+_ = comboRoute(46, prefix: true)
+_ = comboRoute(13, prefix: true)
+_ = comboRoute(14, bound: true)
+_ = comboRoute(7, bound: true)
+_ = comboRoute(KeyCode.delete)
+expect(state.launchCandidate == [46, 13], "Delete after an ignored fourth key takes back the third")
+state.reset()
+// Return while Caps is held confirms: it runs the shortcut now and ends the hold.
+capsDown()
+_ = comboRoute(46, prefix: true)
+_ = comboRoute(13, bound: true)
+let confirmed = comboRoute(KeyCode.returnKey, bound: true)
+expect(confirmed.swallow && confirmed.launchKeys == [46, 13], "Caps + M + W + Return runs Caps + M + W at once")
+expect(!state.showsKeyHint && state.launchCandidate == nil, "Return hides the key hint")
+expect(comboRoute(14, bound: true).launchKeys == nil, "keys after Return do nothing")
+let afterReturn = releaseCaps()
+expect(afterReturn.launchKeys == nil && !afterReturn.tap, "releasing Caps after Return runs nothing more")
+expect(comboRoute(KeyCode.returnKey, down: false).swallow, "the Return release is consumed")
+state.reset()
+capsDown()
+_ = comboRoute(46, prefix: true)
+_ = comboRoute(KeyCode.returnKey)
+expect(state.pressedKeys == [46], "Return never counts as a shortcut key")
+expect(releaseCaps().launchKeys == nil, "Return after keys that only start a shortcut runs nothing")
+state.reset()
+capsDown()
+let enterConfirmed = state.route(key: KeyCode.keypadEnter, down: true, repeated: false, bound: false)
+expect(enterConfirmed.swallow && enterConfirmed.launchKeys == nil && !releaseCaps().tap,
+       "Caps + Enter alone runs nothing and is not a Caps press")
+state.reset()
+capsDown()
+_ = state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true)
+expect(comboRoute(KeyCode.returnKey).window == 123, "Return applies the window preview at once")
+expect(releaseCaps().window == nil, "releasing Caps after Return applies nothing more")
+state.reset()
+capsDown()
+_ = comboRoute(46, prefix: true)
+_ = comboRoute(13, prefix: true)
+_ = comboRoute(11)
+expect(releaseCaps().launchKeys == nil, "a third key that continues no shortcut means nothing runs")
+state.reset()
+print("PASS: three-key shortcuts")
+// Delete while Caps is held takes back the last key.
+state.reset()
+capsDown()
+_ = comboRoute(46, bound: true, prefix: true)
+_ = comboRoute(13, bound: true)
+expect(comboRoute(KeyCode.delete).swallow, "Delete is consumed")
+expect(state.launchCandidate == [46] && state.pressedKeys == [46], "Caps + M + W, Delete is Caps + M again")
+expect(releaseCaps().launchKeys == [46], "releasing Caps then runs Caps + M")
+state.reset()
+capsDown()
+_ = comboRoute(46, bound: true, prefix: true)
+_ = comboRoute(11)
+expect(state.launchCandidate == nil, "an unmatched key leaves nothing to run")
+_ = comboRoute(KeyCode.delete)
+expect(state.launchCandidate == [46], "Delete takes back the unmatched key too")
+_ = comboRoute(13, bound: true)
+expect(releaseCaps().launchKeys == [46, 13], "after Delete the shortcut can be finished")
+state.reset()
+capsDown()
+_ = comboRoute(KeyCode.delete)
+_ = comboRoute(46, bound: true, prefix: true)
+expect(state.launchCandidate == [46], "Delete with no keys yet does nothing")
+_ = comboRoute(KeyCode.delete)
+expect(state.launchCandidate == nil && !state.showsKeyHint, "deleting every key leaves nothing")
+let afterDeletingAll = releaseCaps()
+expect(afterDeletingAll.launchKeys == nil && !afterDeletingAll.tap, "then Caps release runs nothing and is not a Caps press")
+state.reset()
+capsDown()
+_ = state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true)
+_ = comboRoute(KeyCode.delete)
+expect(!state.windowPreviewActive && releaseCaps().window == nil, "in a window gesture Delete cancels the preview")
+state.reset()
+print("PASS: Delete takes back keys while Caps is held")
 // An unbound prefix must never be discarded (Caps A C is not Caps C).
 for releaseFirst in [false, true] {
     state.reset()
@@ -268,14 +386,14 @@ for releaseFirst in [false, true] {
     expect(comboRoute(0, repeated: true).swallow, "unbound A repeats are owned")
     if releaseFirst { expect(comboRoute(0, down: false).swallow, "unbound A release is owned") }
     expect(comboRoute(8, bound: true).swallow, "C after unbound A is owned")
-    expect(state.launchCandidate == nil && state.pendingKey == nil, "A C cannot hint Chrome")
+    expect(state.launchCandidate == nil && state.pendingKeys == nil, "A C cannot hint Chrome")
     let invalid = releaseCaps()
-    expect(invalid.launch == nil && !invalid.tap, "A C cannot launch Chrome or switch input")
+    expect(invalid.launchKeys == nil && !invalid.tap, "A C cannot launch Chrome or switch input")
     if !releaseFirst { expect(comboRoute(0, down: false).swallow, "A release after Caps stays owned") }
     expect(comboRoute(8, down: false).swallow, "C release after Caps stays owned")
     capsDown()
     _ = comboRoute(8, bound: true)
-    expect(releaseCaps().launch == 8, "a fresh exact Caps C still launches Chrome")
+    expect(releaseCaps().launchKeys == [8], "a fresh exact Caps C still launches Chrome")
 }
 for (key, _) in modifierFlags {
     for releaseFirst in [false, true] {
@@ -286,7 +404,7 @@ for (key, _) in modifierFlags {
             expect(state.modifierChanged(key: key, otherModifier: false, pressed: false).swallow, "modifier release before Caps is owned")
         }
         expect(comboRoute(0).swallow, "modified input during Caps stays owned")
-        expect(releaseCaps().launch == nil, "modified gesture launches nothing")
+        expect(releaseCaps().launchKeys == nil, "modified gesture launches nothing")
         if !releaseFirst {
             expect(state.modifierChanged(key: key, otherModifier: false, pressed: false).swallow, "modifier release after Caps stays owned")
         }
@@ -318,7 +436,7 @@ for modifier in ["Control", "Option"] {
     expect(!capsFirst.tap && !capsFirst.showFolders, "Caps then \(modifier), released first, has no action")
     _ = state.route(key: 79, down: true, repeated: false, bound: false, otherModifier: true)
     let extra = state.route(key: 3, down: true, repeated: false, bound: true, otherModifier: true)
-    expect(extra.swallow && extra.launch == nil, "\(modifier) Caps with extra key is consumed")
+    expect(extra.swallow && extra.launchKeys == nil, "\(modifier) Caps with extra key is consumed")
     expect(!releaseCaps().tap, "extra key does not switch input")
 }
 print("PASS: Control/Option Caps have no action, both press/release orders, extra keys consumed")
@@ -329,17 +447,17 @@ for capsReleasedFirst in [false, true] {
     state.reset()
     capsDown()
     let opening = state.route(key: 49, down: true, repeated: false, bound: true)
-    expect(opening.swallow && opening.showFolders && opening.launch == nil, "Caps Space opens Folders")
-    let spaceRepeat = state.route(key: 49, down: true, repeated: true, bound: false, folderSelectionActive: true, folderCount: 9)
+    expect(opening.swallow && opening.showFolders && opening.launchKeys == nil, "Caps Space opens Folders")
+    let spaceRepeat = state.route(key: 49, down: true, repeated: true, bound: false, input: .folderPicker, folderCount: 9)
     expect(spaceRepeat.swallow && !spaceRepeat.showFolders, "Space repeats are consumed and never reopen")
     expect(!state.route(key: 79, down: true, repeated: true, bound: false).showFolders, "Caps repeats never reopen")
     if !capsReleasedFirst {
-        expect(state.route(key: 49, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9).swallow, "Space release is consumed")
+        expect(state.route(key: 49, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).swallow, "Space release is consumed")
     }
-    let release = state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
+    let release = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
     expect(!release.tap && !release.openFolderSelection && !release.showFolders, "release without navigation leaves panel open")
     if capsReleasedFirst {
-        expect(state.route(key: 49, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9).swallow, "Space release after Caps is consumed")
+        expect(state.route(key: 49, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).swallow, "Space release after Caps is consumed")
     }
 }
 state.reset()
@@ -362,32 +480,34 @@ for key in [UInt16(36), 76] {
     expect(!releaseCaps().tap, "Caps Enter does not switch input")
     state.reset()
     capsDown()
-    _ = state.route(key: key, down: true, repeated: false, bound: true)
-    expect(releaseCaps().launch == key, "Caps Enter can use its app assignment")
+    _ = state.route(key: 46, down: true, repeated: false, bound: true)
+    expect(state.route(key: key, down: true, repeated: false, bound: true).launchKeys == [46],
+           "Caps + M + Enter runs Caps + M at once; Enter is never a shortcut key")
+    expect(releaseCaps().launchKeys == nil, "releasing Caps after Enter runs nothing more")
 }
 for key in [UInt16(18), 0, 125, 126, 123, 124] {
     state.reset()
     capsDown()
     _ = state.route(key: 49, down: true, repeated: false, bound: false)
-    _ = state.route(key: 49, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
-    _ = state.route(key: key, down: true, repeated: false, bound: true, folderSelectionActive: true, folderCount: 9)
-    _ = state.route(key: key, down: false, repeated: false, bound: true, folderSelectionActive: true, folderCount: 9)
-    let release = state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
+    _ = state.route(key: 49, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
+    _ = state.route(key: key, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
+    _ = state.route(key: key, down: false, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
+    let release = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
     expect(release.openFolderSelection && !release.tap, "number, letter, or arrow input arms opening on Caps release")
     capsDown()
-    expect(!state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9).openFolderSelection, "selection intent does not carry into another Caps hold")
+    expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "selection intent does not carry into another Caps hold")
 }
 for key in [UInt16(0), 125] {
     state.reset()
     capsDown()
-    _ = state.route(key: key, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
+    _ = state.route(key: key, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
     state.modifierChanged(otherModifier: false, commandModifier: true)
-    expect(!state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9).openFolderSelection, "key releases and modifiers do not count as selection input")
+    expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "key releases and modifiers do not count as selection input")
 }
 state.reset()
 capsDown()
-_ = state.route(key: 125, down: true, repeated: false, bound: false, otherModifier: true, folderSelectionActive: true, folderCount: 9)
-expect(!state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9).openFolderSelection, "Control/Option navigation does not arm selection")
+_ = state.route(key: 125, down: true, repeated: false, bound: false, otherModifier: true, input: .folderPicker, folderCount: 9)
+expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "Control/Option navigation does not arm selection")
 state.reset()
 print("PASS: idle folder panel stays open, navigation arms Caps release, intent resets between holds")
 state.reset()
@@ -397,12 +517,12 @@ let lateSpace = state.route(key: 49, down: true, repeated: false, bound: false)
 expect(lateSpace.showFolders && lateSpace.swallow, "Space after another key still opens Folders")
 expect(!releaseCaps().tap, "the gesture cannot switch input")
 _ = state.route(key: 11, down: false, repeated: false, bound: false)
-_ = state.route(key: 49, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
+_ = state.route(key: 49, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
 state.reset()
 capsDown()
 _ = state.route(key: 3, down: true, repeated: false, bound: true)
 expect(state.route(key: 49, down: true, repeated: false, bound: false).showFolders, "Space after an app key opens Folders")
-expect(state.launchCandidate == nil && releaseCaps().launch == nil, "the app shortcut before Space does not run")
+expect(state.launchCandidate == nil && releaseCaps().launchKeys == nil, "the app shortcut before Space does not run")
 state.reset()
 capsDown()
 _ = state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true)
@@ -425,20 +545,20 @@ state.reset()
 expect(!state.route(key: 49, down: true, repeated: false, bound: false).showFolders, "pause clears pending Caps Space")
 expect(!releaseCaps().tap, "pause clears release action")
 state.reset()
-_ = state.route(key: 79, down: true, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
-let panelSpace = state.route(key: 49, down: true, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
+_ = state.route(key: 79, down: true, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
+let panelSpace = state.route(key: 49, down: true, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
 expect(!panelSpace.showFolders && !panelSpace.swallow, "existing selection panel never reopens; Space reaches the list")
 print("PASS: Caps Space, both release orders, repeats, cancellation, Enter consumption, Command no longer opens")
 state.reset()
 capsDown()
 expect(state.route(key: 49, down: true, repeated: false, bound: false).showFolders, "open panel while Caps held")
-let arrow = state.route(key: 125, down: true, repeated: false, bound: true, folderSelectionActive: true, folderCount: 9)
-expect(!arrow.swallow && arrow.launch == nil, "held Caps lets panel selection keys through even if bound")
-let folderRelease = state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
+let arrow = state.route(key: 125, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
+expect(!arrow.swallow && arrow.launchKeys == nil, "held Caps lets panel selection keys through even if bound")
+let folderRelease = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
 expect(folderRelease.openFolderSelection && !folderRelease.tap && !folderRelease.showFolders, "Caps release confirms folder selection after navigation")
-expect(!state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9).openFolderSelection, "orphan release cannot confirm again")
+expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "orphan release cannot confirm again")
 capsDown()
-let panelTap = state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
+let panelTap = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
 expect(!panelTap.openFolderSelection && panelTap.tap, "standalone Caps in the list replays without opening a folder")
 capsDown()
 let closedPanelRelease = releaseCaps()
@@ -448,19 +568,19 @@ for releaseLetterFirst in [false, true] {
     state.reset()
     capsDown()
     _ = state.route(key: KeyCode.space, down: true, repeated: false, bound: false)
-    let jump = state.route(key: 2, down: true, repeated: false, bound: true, folderSelectionActive: true, folderCount: 4)
-    expect(jump.swallow && jump.folderJump == 2 && jump.launch == nil, "Caps D jumps in the picker without typing D")
-    let repeating = state.route(key: 2, down: true, repeated: true, bound: false, folderSelectionActive: true, folderCount: 4)
+    let jump = state.route(key: 2, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: 4)
+    expect(jump.swallow && jump.folderJump == 2 && jump.launchKeys == nil, "Caps D jumps in the picker without typing D")
+    let repeating = state.route(key: 2, down: true, repeated: true, bound: false, input: .folderPicker, folderCount: 4)
     expect(repeating.swallow && repeating.folderJump == nil, "held letter repeats do not edit search or jump again")
     if releaseLetterFirst {
-        expect(state.route(key: 2, down: false, repeated: false, bound: false, folderSelectionActive: true).swallow, "letter release before Caps is consumed")
+        expect(state.route(key: 2, down: false, repeated: false, bound: false, input: .folderPicker).swallow, "letter release before Caps is consumed")
     }
-    let release = state.route(key: KeyCode.hyper, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 4)
+    let release = state.route(key: KeyCode.hyper, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 4)
     expect(release.openFolderSelection && !release.tap, "Caps release opens the jumped-to folder")
     if !releaseLetterFirst {
-        expect(state.route(key: 2, down: false, repeated: false, bound: false, folderSelectionActive: true).swallow, "letter release after Caps is consumed")
+        expect(state.route(key: 2, down: false, repeated: false, bound: false, input: .folderPicker).swallow, "letter release after Caps is consumed")
     }
-    let typing = state.route(key: 2, down: true, repeated: false, bound: false, folderSelectionActive: true)
+    let typing = state.route(key: 2, down: true, repeated: false, bound: false, input: .folderPicker)
     expect(!typing.swallow && typing.folderJump == nil, "after Caps release ordinary typing reaches search")
 }
 state.reset()
@@ -469,29 +589,29 @@ print("PASS: Caps release opens folder selection, navigation passthrough, no inp
 for (number, key) in [UInt16(18), 19, 20, 21, 23, 22, 26, 28, 25].enumerated() {
     state.reset()
     capsDown()
-    let shortcut = state.route(key: key, down: true, repeated: false, bound: true, folderSelectionActive: true, folderCount: 9)
-    expect(shortcut.swallow && shortcut.folderNumber == number && shortcut.launch == nil && !shortcut.openFolderSelection, "Caps number selects folder instead of launching a bound app")
-    let repeated = state.route(key: key, down: true, repeated: true, bound: true, folderSelectionActive: true, folderCount: 9)
+    let shortcut = state.route(key: key, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
+    expect(shortcut.swallow && shortcut.folderNumber == number && shortcut.launchKeys == nil && !shortcut.openFolderSelection, "Caps number selects folder instead of launching a bound app")
+    let repeated = state.route(key: key, down: true, repeated: true, bound: true, input: .folderPicker, folderCount: 9)
     expect(repeated.swallow && repeated.folderNumber == nil, "folder shortcut repeats are consumed")
-    let release = state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9)
+    let release = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
     expect(release.openFolderSelection && !release.tap, "Caps release opens the numbered selection")
-    expect(!state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9).openFolderSelection, "numbered selection opens only once on Caps release")
+    expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "numbered selection opens only once on Caps release")
     expect(state.route(key: key, down: false, repeated: false, bound: true).swallow, "folder shortcut release is consumed even after panel closes")
 }
 state.reset()
 capsDown()
 for key in [UInt16(18), 25, 20] {
-    let move = state.route(key: key, down: true, repeated: false, bound: true, folderSelectionActive: true, folderCount: 9)
+    let move = state.route(key: key, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
     expect(move.folderNumber != nil && !move.openFolderSelection, "multiple numbers can change selection during one Caps hold")
-    let keyUp = state.route(key: key, down: false, repeated: false, bound: true, folderSelectionActive: true, folderCount: 9)
+    let keyUp = state.route(key: key, down: false, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
     expect(keyUp.swallow && !keyUp.openFolderSelection, "releasing a number does not open the folder")
 }
-expect(state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9).openFolderSelection, "only Caps release confirms the final selection")
+expect(state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "only Caps release confirms the final selection")
 state.reset()
-expect(state.route(key: 18, down: true, repeated: false, bound: false, commandModifier: true, folderSelectionActive: true, folderCount: 9).folderNumber == nil, "Command number no longer selects a folder")
+expect(state.route(key: 18, down: true, repeated: false, bound: false, commandModifier: true, input: .folderPicker, folderCount: 9).folderNumber == nil, "Command number no longer selects a folder")
 capsDown()
 let appNumber = state.route(key: 18, down: true, repeated: false, bound: true)
-expect(appNumber.folderNumber == nil && releaseCaps().launch == 18, "Caps number outside folder panel still launches its assigned app")
+expect(appNumber.folderNumber == nil && releaseCaps().launchKeys == [18], "Caps number outside folder panel still launches its assigned app")
 state.reset()
 print("PASS: Caps folder numbers 1–9, repeat/release consumption, no duplicate opening, app shortcut isolation")
 
@@ -499,17 +619,17 @@ for releaseSpaceFirst in [false, true] {
     state.reset()
     capsDown()
     _ = state.route(key: 49, down: true, repeated: false, bound: false)
-    if releaseSpaceFirst { _ = state.route(key: 49, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 9) }
+    if releaseSpaceFirst { _ = state.route(key: 49, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9) }
     state.modifierChanged(otherModifier: false, commandModifier: true)
-    let letter = state.route(key: 0, down: true, repeated: false, bound: true, commandModifier: true, folderSelectionActive: true, folderCount: 9)
-    expect(letter.swallow && letter.folderJump == 0 && letter.launch == nil, "Command-held Caps letters jump without editing search")
-    let letterUp = state.route(key: 0, down: false, repeated: false, bound: true, commandModifier: true, folderSelectionActive: true, folderCount: 9)
+    let letter = state.route(key: 0, down: true, repeated: false, bound: true, commandModifier: true, input: .folderPicker, folderCount: 9)
+    expect(letter.swallow && letter.folderJump == 0 && letter.launchKeys == nil, "Command-held Caps letters jump without editing search")
+    let letterUp = state.route(key: 0, down: false, repeated: false, bound: true, commandModifier: true, input: .folderPicker, folderCount: 9)
     expect(letterUp.swallow, "Caps navigation letter release is consumed")
-    let number = state.route(key: 20, down: true, repeated: false, bound: true, commandModifier: true, folderSelectionActive: true, folderCount: 9)
+    let number = state.route(key: 20, down: true, repeated: false, bound: true, commandModifier: true, input: .folderPicker, folderCount: 9)
     expect(number.swallow && number.folderNumber == 2 && !number.openFolderSelection, "Command-held Caps number selects without opening")
-    let release = state.route(key: 79, down: false, repeated: false, bound: false, commandModifier: true, folderSelectionActive: true, folderCount: 9)
+    let release = state.route(key: 79, down: false, repeated: false, bound: false, commandModifier: true, input: .folderPicker, folderCount: 9)
     expect(release.openFolderSelection && !release.tap, "Caps release confirms even with Command still held")
-    let ordinaryCommand = state.route(key: 0, down: true, repeated: false, bound: false, commandModifier: true, folderSelectionActive: true, folderCount: 9)
+    let ordinaryCommand = state.route(key: 0, down: true, repeated: false, bound: false, commandModifier: true, input: .folderPicker, folderCount: 9)
     expect(!ordinaryCommand.stripCommandModifier, "without Caps normal panel Command shortcuts remain available")
 }
 state.reset()
@@ -518,12 +638,16 @@ expect(!state.route(key: 0, down: true, repeated: false, bound: true, commandMod
 state.reset()
 print("PASS: Command-held Caps folder letters/numbers, release confirmation, normal Command preservation")
 
+expect(FolderEntry(name: "projects", path: "/tmp/projects").originalName == "projects"
+       && !FolderEntry(name: "projects", path: "/tmp/projects").isRenamed
+       && FolderEntry(name: "Work", path: "/tmp/projects").isRenamed, "a folder entry knows whether it was renamed")
 let folders = [FolderEntry(name: "Work Projects", path: "/tmp/projects"),
                FolderEntry(name: "中文文件夹", path: "/tmp/中文")]
 let restoredFolders = try JSONDecoder().decode([FolderEntry].self, from: JSONEncoder().encode(folders))
 expect(restoredFolders.map { $0.name } == folders.map { $0.name }, "custom folder names persist")
 expect(restoredFolders.map { $0.path } == folders.map { $0.path }, "renaming list entries preserves folder paths")
 print("PASS: folder persistence")
+
 
 var ordered = (0..<4).map { FolderEntry(name: "Folder \($0)", path: "/tmp/\($0)") }
 expect(FolderOrder.move(&ordered, paths: ["/tmp/0"], to: 4) == IndexSet(integer: 3), "drag first folder to end")
@@ -548,7 +672,7 @@ expect(FolderOrder.move(&groupOrder, paths: [], to: 0) == nil, "empty group is r
 expect(groupOrder.map { $0.path } == beforeInvalidDrop, "invalid group drop leaves list unchanged")
 print("PASS: multiple folder drag, stable ordering, selection, invalid group rejection")
 
-for key in [UInt16(36), 3] {
+for key in [UInt16(46), 3] {
     for keyStillHeld in [false, true] {
         state.reset()
         capsDown()
@@ -556,15 +680,15 @@ for key in [UInt16(36), 3] {
         if !keyStillHeld {
             expect(state.route(key: key, down: false, repeated: false, bound: true).swallow, "its release before Caps is consumed")
         }
-        expect(releaseCaps().launch == key, "Caps release runs the shortcut before confirmation")
+        expect(releaseCaps().launchKeys == [key], "Caps release runs the shortcut before confirmation")
         state.cancelGesture() // Window resignation can occur before the next keyboard event.
         if keyStillHeld {
-            expect(state.route(key: key, down: true, repeated: true, bound: false, shortcutsEnabled: false).swallow, "confirmation consumes original shortcut repeats")
-            expect(!state.route(key: 53, down: true, repeated: false, bound: false, shortcutsEnabled: false).swallow, "fresh Escape can cancel confirmation")
-            expect(state.route(key: key, down: false, repeated: false, bound: false, shortcutsEnabled: false).swallow, "confirmation consumes original shortcut release")
+            expect(state.route(key: key, down: true, repeated: true, bound: false, input: .inactive).swallow, "confirmation consumes original shortcut repeats")
+            expect(!state.route(key: 53, down: true, repeated: false, bound: false, input: .inactive).swallow, "fresh Escape can cancel confirmation")
+            expect(state.route(key: key, down: false, repeated: false, bound: false, input: .inactive).swallow, "confirmation consumes original shortcut release")
         }
-        expect(!state.route(key: key, down: true, repeated: false, bound: false, shortcutsEnabled: false).swallow, "a fresh press can confirm or type normally")
-        _ = state.route(key: key, down: false, repeated: false, bound: false, shortcutsEnabled: false)
+        expect(!state.route(key: key, down: true, repeated: false, bound: false, input: .inactive).swallow, "a fresh press can confirm or type normally")
+        _ = state.route(key: key, down: false, repeated: false, bound: false, input: .inactive)
     }
 }
 print("PASS: confirmation repeat/release ownership, both release orders, focus changes, fresh input")
@@ -573,20 +697,20 @@ for count in [0, 1, 8, 9] {
     for (number, key) in [UInt16(18), 19, 20, 21, 23, 22, 26, 28, 25].enumerated() {
         state.reset()
         capsDown()
-        let result = state.route(key: key, down: true, repeated: false, bound: true, folderSelectionActive: true, folderCount: count)
-        expect(result.swallow && result.launch == nil, "folder numbers never leak to app shortcuts")
+        let result = state.route(key: key, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: count)
+        expect(result.swallow && result.launchKeys == nil, "folder numbers never leak to app shortcuts")
         expect(result.folderNumber == (number < count ? number : nil), "only existing folder numbers select rows")
-        let release = state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: count)
+        let release = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: count)
         expect(release.openFolderSelection == (number < count), "invalid number cannot open the existing selection")
         expect(state.route(key: key, down: false, repeated: false, bound: false).swallow, "invalid and valid number releases are consumed")
     }
 }
 state.reset()
 capsDown()
-_ = state.route(key: 18, down: true, repeated: false, bound: false, folderSelectionActive: true, folderCount: 1)
-_ = state.route(key: 18, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 1)
-_ = state.route(key: 25, down: true, repeated: false, bound: false, folderSelectionActive: true, folderCount: 1)
-expect(!state.route(key: 79, down: false, repeated: false, bound: false, folderSelectionActive: true, folderCount: 1).openFolderSelection, "invalid number cancels earlier valid selection intent")
+_ = state.route(key: 18, down: true, repeated: false, bound: false, input: .folderPicker, folderCount: 1)
+_ = state.route(key: 18, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 1)
+_ = state.route(key: 25, down: true, repeated: false, bound: false, input: .folderPicker, folderCount: 1)
+expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 1).openFolderSelection, "invalid number cancels earlier valid selection intent")
 print("PASS: folder number bounds, empty lists, invalid number after valid selection")
 
 
@@ -618,39 +742,34 @@ print("PASS: 256 batch-open failure combinations, selection order, aggregated er
 
 // The same standalone rule applies to normal apps, focused input (recording,
 // confirmation, editors), and folder lists. Only chord actions depend on context.
-for shortcuts in [false, true] {
-    for list in [false, true] {
-        state.reset()
-        _ = state.route(key: 79, down: true, repeated: false, bound: false,
-                        folderSelectionActive: list, shortcutsEnabled: shortcuts)
-        _ = state.route(key: 79, down: true, repeated: true, bound: false,
-                        folderSelectionActive: list, shortcutsEnabled: shortcuts)
-        let release = state.route(key: 79, down: false, repeated: false, bound: false,
-                                   folderSelectionActive: list, shortcutsEnabled: shortcuts)
-        expect(release.tap && !release.openFolderSelection, "standalone Caps replays in every context")
-        expect(!releaseCaps().tap, "standalone Caps replays once")
-    }
+for input in [KeyboardState.Input.shortcuts, .folderPicker, .inactive] {
+    state.reset()
+    _ = state.route(key: 79, down: true, repeated: false, bound: false, input: input)
+    _ = state.route(key: 79, down: true, repeated: true, bound: false, input: input)
+    let release = state.route(key: 79, down: false, repeated: false, bound: false, input: input)
+    expect(release.tap && !release.openFolderSelection, "standalone Caps replays in every context")
+    expect(!releaseCaps().tap, "standalone Caps replays once")
 }
 state.reset()
-_ = state.route(key: 79, down: true, repeated: false, bound: false, shortcutsEnabled: false)
-let focusedSpace = state.route(key: 49, down: true, repeated: false, bound: false, shortcutsEnabled: false)
+_ = state.route(key: 79, down: true, repeated: false, bound: false, input: .inactive)
+let focusedSpace = state.route(key: 49, down: true, repeated: false, bound: false, input: .inactive)
 expect(!focusedSpace.showFolders && !focusedSpace.swallow, "focused input suppresses Caps Space action and receives Space")
 expect(!releaseCaps().tap, "Caps Space in focused input never replays")
 state.reset()
 capsDown()
-let typed = state.route(key: 3, down: true, repeated: false, bound: true, shortcutsEnabled: false)
-expect(!typed.swallow && typed.launch == nil, "focused input receives assigned letters without launching")
+let typed = state.route(key: 3, down: true, repeated: false, bound: true, input: .inactive)
+expect(!typed.swallow && typed.launchKeys == nil, "focused input receives assigned letters without launching")
 expect(!releaseCaps().tap, "typing a chord in focused input does not replay Caps")
 state.reset()
 capsDown()
 let changedContext = state.route(key: 79, down: false, repeated: false, bound: false,
-                                 shortcutsEnabled: false)
+                                 input: .inactive)
 expect(changedContext.tap, "context alone cannot swallow a standalone Caps gesture")
 state.reset()
 capsDown()
 _ = state.route(key: 3, down: true, repeated: false, bound: true)
 expect(state.route(key: 3, down: false, repeated: false, bound: false,
-                   shortcutsEnabled: false).swallow,
+                   input: .inactive).swallow,
        "context changes preserve ownership of swallowed shortcut releases")
 expect(!releaseCaps().tap, "a handled chord cannot become standalone after context changes")
 print("PASS: unified standalone Caps, context-specific chords, repeat and release ownership")
@@ -723,12 +842,12 @@ print("PASS: saved lists load, round-trip, and preserve unreadable data")
 state.reset()
 capsDown()
 let leftKey = state.route(key: 123, down: true, repeated: false, bound: true, windowKey: true)
-expect(leftKey.swallow && leftKey.windowPreview == 123 && leftKey.window == nil && leftKey.launch == nil, "a window key shows its preview and waits for Caps release")
+expect(leftKey.swallow && leftKey.windowPreview == 123 && leftKey.window == nil && leftKey.launchKeys == nil, "a window key shows its preview and waits for Caps release")
 expect(state.windowPreviewActive, "the preview stays while Caps is held")
 expect(state.route(key: 123, down: true, repeated: true, bound: false, windowKey: true).swallow, "holding an arrow does not repeat the layout")
 expect(state.route(key: 123, down: false, repeated: false, bound: false, windowKey: true).swallow, "window key release is consumed")
 let leftRelease = releaseCaps()
-expect(leftRelease.window == 123 && leftRelease.launch == nil && !leftRelease.tap, "window keys win over App List bindings and never toggle Caps Lock")
+expect(leftRelease.window == 123 && leftRelease.launchKeys == nil && !leftRelease.tap, "window keys win over App List bindings and never toggle Caps Lock")
 capsDown()
 for _ in 0..<2 {
     expect(state.route(key: 126, down: true, repeated: false, bound: false, windowKey: true).windowPreview == 126, "each ↑ press steps the preview")
@@ -752,7 +871,7 @@ _ = state.route(key: 53, down: false, repeated: false, bound: false)
 capsDown()
 _ = state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true)
 expect(state.route(key: 3, down: true, repeated: false, bound: true).windowPreview == nil && !state.windowPreviewActive, "an app key cancels the preview")
-expect(releaseCaps().window == nil && releaseCaps().launch == nil, "nothing runs after a mixed window and app gesture")
+expect(releaseCaps().window == nil && releaseCaps().launchKeys == nil, "nothing runs after a mixed window and app gesture")
 _ = state.route(key: 123, down: false, repeated: false, bound: false, windowKey: true)
 _ = state.route(key: 3, down: false, repeated: false, bound: true)
 _ = state.route(key: 126, down: false, repeated: false, bound: false, windowKey: true)
@@ -760,7 +879,7 @@ _ = state.route(key: 123, down: false, repeated: false, bound: false, windowKey:
 expect(!state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true).swallow, "arrows pass through without Caps")
 _ = state.route(key: 123, down: false, repeated: false, bound: false, windowKey: true)
 capsDown()
-expect(state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true, folderSelectionActive: true, folderCount: 9).window == nil, "arrows navigate the folder list instead")
+expect(state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true, input: .folderPicker, folderCount: 9).window == nil, "arrows navigate the folder list instead")
 _ = releaseCaps()
 state.reset()
 capsDown()
@@ -768,7 +887,7 @@ expect(state.route(key: 123, down: true, repeated: false, bound: false, windowKe
 _ = releaseCaps()
 state.reset()
 capsDown()
-expect(state.route(key: 24, down: true, repeated: false, bound: false, windowKey: true, shortcutsEnabled: false).window == nil, "no layout while recording or confirming")
+expect(state.route(key: 24, down: true, repeated: false, bound: false, windowKey: true, input: .inactive).window == nil, "no layout while recording or confirming")
 _ = releaseCaps()
 state.reset()
 let defaultWindowKeys = WindowShortcuts.defaults
@@ -859,9 +978,9 @@ var windowKeys = WindowShortcuts.defaults
 windowKeys.assign(40, to: .center)
 expect(windowKeys.key(for: .center) == 40 && windowKeys.command(for: 40) == .center && windowKeys.command(for: 44) == nil, "reassigning frees the old key")
 windowKeys.assign(123, to: .right)
-expect(windowKeys.key(for: .right) == 123 && windowKeys.key(for: .left) == unassignedKey, "taking another action's key leaves it unassigned")
+expect(windowKeys.key(for: .right) == 123 && windowKeys.key(for: .left) == nil, "taking another action's key leaves it unassigned")
 windowKeys.clear(123)
-expect(windowKeys.command(for: 123) == nil && windowKeys.key(for: .right) == unassignedKey, "clearing a key unassigns its action")
+expect(windowKeys.command(for: 123) == nil && windowKeys.key(for: .right) == nil, "clearing a key unassigns its action")
 let windowKeysSuite = "local.maxvoid.Clutch.window-tests"
 let windowKeysDefaults = UserDefaults(suiteName: windowKeysSuite)!
 windowKeysDefaults.removePersistentDomain(forName: windowKeysSuite)
@@ -870,7 +989,7 @@ windowKeys.save(to: windowKeysDefaults)
 expect(WindowShortcuts.load(from: windowKeysDefaults) == windowKeys, "window shortcuts round-trip, including unassigned actions")
 windowKeysDefaults.set(Data(#"{"center":40,"left":40}"#.utf8), forKey: DefaultsKey.windowShortcuts)
 let partialKeys = WindowShortcuts.load(from: windowKeysDefaults)
-expect(partialKeys.key(for: .left) == 40 && partialKeys.key(for: .center) == unassignedKey && partialKeys.key(for: .up) == 126,
+expect(partialKeys.key(for: .left) == 40 && partialKeys.key(for: .center) == nil && partialKeys.key(for: .up) == 126,
        "missing actions keep defaults and a repeated key stays with one action")
 windowKeysDefaults.set(Data("junk".utf8), forKey: DefaultsKey.windowShortcuts)
 expect(WindowShortcuts.load(from: windowKeysDefaults) == .defaults, "unreadable window shortcuts load the defaults")
@@ -925,3 +1044,108 @@ continued.apply(.left)
 expect(continued.frame.width == 960, "a window Clutch left at 1/2 continues with 2/3")
 print("PASS: window preview plans: halves cycle, height/maximize, restore, resize steps, continuation")
 print("PASS: window layout routing, halves, height/maximize, restore, resize, displays")
+
+// Websites: the address saved for what was typed, what it matches, and which open tab Caps goes to.
+expect(WebsiteAddress.normalize("github.com") == "https://github.com", "a bare domain gets https")
+expect(WebsiteAddress.normalize("  HTTPS://GitHub.com/ ") == "https://github.com", "scheme and host are lowercased, a lone / dropped")
+expect(WebsiteAddress.normalize("github.com/qianshuguo/clutch/") == "https://github.com/qianshuguo/clutch", "trailing slashes are dropped")
+expect(WebsiteAddress.normalize("mail.google.com/mail/u/0/#inbox") == "https://mail.google.com/mail/u/0/#inbox",
+       "a fragment is kept for opening")
+expect(WebsiteAddress.normalize("localhost:3000") == "http://localhost:3000"
+       && WebsiteAddress.normalize("127.0.0.1:8080/app") == "http://127.0.0.1:8080/app", "local servers get http")
+expect(WebsiteAddress.normalize("https://localhost:3000") == "https://localhost:3000", "a typed scheme is kept")
+expect(["", "  ", "github", "not a url", "ftp://example.com", "chrome://newtab", "github.com."].allSatisfy {
+    WebsiteAddress.normalize($0) == nil }, "text that is not a web address is refused")
+let wholeSite = WebsiteAddress("https://github.com")!
+expect(wholeSite.matches(WebsiteAddress("http://www.github.com/x/y?tab=1#top")!), "a domain matches every page of the site, with or without www")
+expect(!wholeSite.matches(WebsiteAddress("https://gist.github.com")!), "without Include subdomains, subdomains are other sites")
+let ctrip = WebsiteScope(WebsiteAddress("https://ctrip.com")!, includesSubdomains: true)
+expect(ctrip.matches(WebsiteAddress("https://flight.ctrip.com/x")!) && ctrip.matches(WebsiteAddress("https://a.b.ctrip.com")!)
+       && ctrip.matches(WebsiteAddress("https://www.ctrip.com")!), "with Include subdomains, a domain matches its subdomains")
+expect(!ctrip.matches(WebsiteAddress("https://notctrip.com")!) && !ctrip.matches(WebsiteAddress("https://ctrip.com.evil.io")!),
+       "other domains ending in the same letters are not subdomains")
+expect(!WebsiteScope(WebsiteAddress("http://localhost:3000")!, includesSubdomains: true).includesSubdomains
+       && !WebsiteScope(WebsiteAddress("http://127.0.0.1")!, includesSubdomains: true).matches(WebsiteAddress("http://9.127.0.0.1")!),
+       "localhost and IP addresses have no subdomains")
+expect(WebsiteScope(WebsiteAddress("https://ctrip.com/abc")!, includesSubdomains: true).matches(WebsiteAddress("https://flight.ctrip.com/abc/1")!)
+       && !WebsiteScope(WebsiteAddress("https://ctrip.com/abc")!, includesSubdomains: true).matches(WebsiteAddress("https://flight.ctrip.com/")!),
+       "Include subdomains changes only the domain; a path still applies")
+expect(!wholeSite.matches(WebsiteAddress("https://github.com:8443")!), "another port is another site")
+let repoPage = WebsiteAddress("https://github.com/qianshuguo/clutch")!
+expect(repoPage.matches(WebsiteAddress("https://github.com/qianshuguo/clutch")!)
+       && repoPage.matches(WebsiteAddress("https://github.com/QianShuGuo/Clutch/issues/3")!), "a path matches that page and below, ignoring case")
+expect(!repoPage.matches(WebsiteAddress("https://github.com/qianshuguo/clutchy")!)
+       && !repoPage.matches(WebsiteAddress("https://github.com/qianshuguo")!), "a path does not match siblings or parents")
+expect(WebsiteAddress("about:blank") == nil && WebsiteAddress("") == nil && WebsiteAddress("file:///tmp") == nil,
+       "non-web tabs never match")
+expect(WebsiteEntry(url: "https://www.github.com/QianShuGuo/").name == "github.com/qianshuguo"
+       && WebsiteEntry(url: "http://localhost:3000").name == "localhost:3000", "names show exactly what matches")
+let oldSite = try! JSONDecoder().decode([WebsiteEntry].self, from: Data(#"[{"url":"https://github.com"}]"#.utf8))
+expect(oldSite[0].keys.isEmpty, "a website saved without a shortcut loads")
+expect(oldSite[0].includesSubdomains, "a website saved before Include subdomains existed includes them")
+let exactSite = WebsiteEntry(url: "https://github.com", includesSubdomains: false)
+expect(String(decoding: try! JSONEncoder().encode(exactSite), as: UTF8.self).contains(#""subdomains":false"#)
+       && (try! JSONDecoder().decode(WebsiteEntry.self, from: JSONEncoder().encode(exactSite))) == exactSite
+       && !String(decoding: try! JSONEncoder().encode(oldSite[0]), as: UTF8.self).contains("subdomains"),
+       "Include subdomains is saved only when off, and round-trips")
+let savedSite = WebsiteEntry(url: "https://github.com", keys: [5])
+expect(String(decoding: try! JSONEncoder().encode(savedSite), as: UTF8.self).contains(#""shortcut":[5]"#)
+       && (try! JSONDecoder().decode(WebsiteEntry.self, from: JSONEncoder().encode(savedSite))) == savedSite,
+       "website shortcuts are saved under \"shortcut\" and round-trip")
+let namedSite = WebsiteEntry(url: "https://github.com/qianshuguo/clutch", title: "Clutch repo", keys: [5])
+expect(namedSite.name == "Clutch repo" && namedSite.address == "github.com/qianshuguo/clutch",
+       "a named website shows its name instead of what it matches")
+expect(WebsiteEntry(url: "https://github.com", title: "  ").name == "github.com", "without a name, the address is the name")
+expect(String(data: try! JSONEncoder().encode(namedSite), encoding: .utf8)!.contains(#""title":"Clutch repo""#)
+       && (try! JSONDecoder().decode(WebsiteEntry.self, from: JSONEncoder().encode(namedSite))) == namedSite
+       && !String(data: try! JSONEncoder().encode(savedSite), encoding: .utf8)!.contains("title"),
+       "a website's name is saved under \"title\", and left out when empty")
+// Window 7 is in front with Hacker News selected; window 3 behind it shows a GitHub page.
+let browserTabs = [BrowserTab(window: 7, windowIndex: 1, index: 1, url: "https://news.ycombinator.com", active: true),
+                   BrowserTab(window: 7, windowIndex: 1, index: 2, url: "https://github.com/a", active: false),
+                   BrowserTab(window: 3, windowIndex: 2, index: 1, url: "https://github.com/b", active: true),
+                   BrowserTab(window: 3, windowIndex: 2, index: 2, url: "", active: false)]
+expect(WebsiteTabChoice.choose(WebsiteScope(wholeSite), tabs: browserTabs, browserFrontmost: false) == browserTabs[1],
+       "from another app, the front window's match is chosen")
+expect(WebsiteTabChoice.choose(WebsiteScope(wholeSite), tabs: browserTabs, browserFrontmost: true) == browserTabs[1],
+       "in the browser on another site, the front window's match is chosen")
+let onFirst = [BrowserTab(window: 7, windowIndex: 1, index: 1, url: "https://news.ycombinator.com", active: false),
+               BrowserTab(window: 7, windowIndex: 1, index: 2, url: "https://github.com/a", active: true),
+               BrowserTab(window: 3, windowIndex: 2, index: 1, url: "https://github.com/b", active: true)]
+expect(WebsiteTabChoice.choose(WebsiteScope(wholeSite), tabs: onFirst, browserFrontmost: true) == onFirst[2],
+       "pressing again on a match goes to the next match")
+let onSecond = [BrowserTab(window: 3, windowIndex: 1, index: 1, url: "https://github.com/b", active: true),
+                BrowserTab(window: 7, windowIndex: 2, index: 1, url: "https://news.ycombinator.com", active: false),
+                BrowserTab(window: 7, windowIndex: 2, index: 2, url: "https://github.com/a", active: true)]
+expect(WebsiteTabChoice.choose(WebsiteScope(wholeSite), tabs: onSecond, browserFrontmost: true) == onSecond[2],
+       "the next press wraps around, even though that window came to the front")
+expect(WebsiteTabChoice.choose(WebsiteScope(wholeSite), tabs: onFirst, browserFrontmost: false) == onFirst[1],
+       "from another app, the match already in front is shown, not skipped")
+expect(WebsiteTabChoice.choose(WebsiteScope(WebsiteAddress("https://example.com")!), tabs: browserTabs, browserFrontmost: true) == nil,
+       "no match opens a new tab")
+expect(WebsiteTabChoice.choose(WebsiteScope(repoPage), tabs: [BrowserTab(window: 1, windowIndex: 1, index: 1,
+                                                           url: "https://github.com/qianshuguo/clutch", active: true)],
+                               browserFrontmost: true)?.window == 1, "a single match stays selected")
+// ctrip.com includes subdomains; flight.ctrip.com has its own shortcut.
+let flight = WebsiteScope(WebsiteAddress("https://flight.ctrip.com")!, includesSubdomains: true)
+let onlyFlight = [BrowserTab(window: 1, windowIndex: 1, index: 1, url: "https://flight.ctrip.com/list", active: true)]
+expect(WebsiteTabChoice.choose(ctrip, tabs: onlyFlight, browserFrontmost: false) == onlyFlight[0],
+       "a domain that includes subdomains goes to a subdomain's tab")
+expect(WebsiteTabChoice.choose(ctrip, tabs: onlyFlight, browserFrontmost: false, others: [flight]) == nil
+       && WebsiteTabChoice.choose(flight, tabs: onlyFlight, browserFrontmost: false, others: [ctrip]) == onlyFlight[0],
+       "a tab another website inside it matches belongs to that website")
+let hotelsAndHome = [BrowserTab(window: 1, windowIndex: 1, index: 1, url: "https://hotels.ctrip.com", active: true),
+                     BrowserTab(window: 2, windowIndex: 2, index: 1, url: "https://www.ctrip.com/", active: true)]
+expect(WebsiteTabChoice.choose(ctrip, tabs: hotelsAndHome, browserFrontmost: false, others: [flight]) == hotelsAndHome[1],
+       "the site's own domain comes before its subdomains, even in a window behind")
+expect(WebsiteTabChoice.choose(ctrip, tabs: [hotelsAndHome[0]], browserFrontmost: false, others: [flight]) == hotelsAndHome[0],
+       "a subdomain no other website owns is still the domain's")
+let repoTab = [BrowserTab(window: 1, windowIndex: 1, index: 1, url: "https://github.com/qianshuguo/clutch/issues", active: true)]
+expect(WebsiteTabChoice.choose(WebsiteScope(wholeSite), tabs: repoTab, browserFrontmost: false, others: [WebsiteScope(repoPage)]) == nil,
+       "a page saved with its own path belongs to that website, not the whole site")
+let onHome = [BrowserTab(window: 5, windowIndex: 1, index: 1, url: "https://www.ctrip.com", active: true),
+              BrowserTab(window: 5, windowIndex: 1, index: 2, url: "https://flight.ctrip.com", active: false),
+              BrowserTab(window: 9, windowIndex: 2, index: 1, url: "https://hotels.ctrip.com", active: true)]
+expect(WebsiteTabChoice.choose(ctrip, tabs: onHome, browserFrontmost: true, others: [flight]) == onHome[2],
+       "pressing again on the domain's tab goes on to its subdomains, skipping tabs other websites own")
+print("PASS: website addresses, matching, saved shortcuts, tab choice and cycling")

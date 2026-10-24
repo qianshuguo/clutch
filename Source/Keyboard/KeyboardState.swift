@@ -1,12 +1,24 @@
 import Foundation
 
 // A standalone Caps release requests a system Caps press. Shortcuts run when Caps
-// is released: hold Caps, press one key (Caps + F) or two keys in order
-// (Caps + M + W), release Caps. The keys may be released before Caps. Releasing
-// Caps decides what was meant, so a key can open an app by itself and also start
-// two-key shortcuts. Caps + Space (Folders) opens on press, even after other keys. Window keys preview
+// is released: hold Caps, press one key (Caps + F) or up to three keys in order
+// (Caps + M + W, Caps + M + W + E), release Caps, or press Return to run it at once.
+// Keys after the third are ignored. The keys may be released before Caps. Releasing Caps decides what was meant, so keys can open an app by themselves
+// and also start longer shortcuts. Caps + Space (Folders) opens on press, even after other keys. Window keys preview
 // while Caps is held: each press updates the preview, releasing Caps applies it.
 struct KeyboardState {
+    // Keys one app shortcut may use after Caps.
+    static let maxShortcutKeys = 3
+    // Who gets keys pressed while Caps is held.
+    enum Input {
+        // Caps shortcuts (App List, Folders, window actions, Caps + Space).
+        case shortcuts
+        // The focused Folders picker: numbers, letters and navigation select a folder.
+        case folderPicker
+        // Clutch's own focused input (a shortcut being recorded, the launch
+        // confirmation, renaming): keys pass through and run no shortcut.
+        case inactive
+    }
     struct Result {
         var swallow = false
         var stripCommandModifier = false
@@ -16,9 +28,8 @@ struct KeyboardState {
         var openFolderSelection = false
         var folderNumber: Int?
         var folderJump: UInt16?
-        // App shortcut to run: Caps + launch, or Caps + launch + launchSecond.
-        var launch: UInt16?
-        var launchSecond: UInt16?
+        // The keys of the App List or Folders shortcut to run, in order.
+        var launchKeys: [UInt16]?
         // Releasing Caps applies the window preview (the first window key pressed).
         var window: UInt16?
         // A window key pressed while Caps is held: update the preview.
@@ -26,7 +37,7 @@ struct KeyboardState {
     }
     private(set) var held = false
     private(set) var chord = false
-    // The first two keys pressed during this Caps hold, for the on-screen key hint.
+    // The first keys pressed during this Caps hold (up to maxShortcutKeys), for the on-screen key hint.
     private(set) var pressedKeys: [UInt16] = []
     // Escape while Caps is held: this hold does nothing more, and shows nothing.
     private(set) var escaped = false
@@ -36,23 +47,34 @@ struct KeyboardState {
     // Shortcut keys pressed during this Caps hold, in order.
     private var sequence: [UInt16] = []
     private var sequenceWindow = false   // the first key is a window action
-    private var sequenceBound = false    // the first key opens an app by itself
+    private var sequenceBound = false    // the keys so far open an app by themselves
     private var sequenceValid = false    // false once a key no shortcut uses follows
-    // The first key, while a second key could still complete a two-key shortcut.
-    var pendingKey: UInt16? { sequence.count == 1 && sequenceValid && !sequenceWindow ? sequence[0] : nil }
-    // The app shortcut releasing Caps would run right now (Caps + M, or Caps + M + W),
+    // The app keys pressed so far, while another key could still extend them.
+    var pendingKeys: [UInt16]? {
+        guard sequenceValid, !sequenceWindow, !sequence.isEmpty, sequence.count < Self.maxShortcutKeys else { return nil }
+        return sequence
+    }
+    // The app shortcut releasing Caps would run right now (Caps + M, Caps + M + W, …),
     // for the on-screen hint. Mirrors the release rules in route(key:).
-    var launchCandidate: (first: UInt16, second: UInt16?)? {
-        guard held, sequenceValid, !sequenceWindow, !otherModifierGesture, !folderGesture else { return nil }
-        if sequence.count == 2 { return (sequence[0], sequence[1]) }
-        if sequence.count == 1 && sequenceBound { return (sequence[0], nil) }
-        return nil
+    var launchCandidate: [UInt16]? {
+        guard held, sequenceValid, sequenceBound, !sequenceWindow, !otherModifierGesture, !folderGesture else { return nil }
+        return sequence
     }
     // This Caps hold started with a window action key; it stays a window gesture (the
     // preview is the feedback, no Caps HUD) until Caps is released.
     var windowGesture: Bool { held && sequenceWindow }
     // A window preview should stay on screen.
     var windowPreviewActive: Bool { held && sequenceWindow && sequenceValid }
+    // What this hold looked like before each shortcut key, so Delete (still holding
+    // Caps) can take the last key back: Caps + M + W, Delete → Caps + M.
+    private struct Step {
+        var sequence: [UInt16]
+        var window: Bool
+        var bound: Bool
+        var valid: Bool
+        var pressedKeys: [UInt16]
+    }
+    private var steps: [Step] = []
     private var otherModifierGesture = false
     private var folderGesture = false
     private var folderSelectionEntered = false
@@ -83,20 +105,21 @@ struct KeyboardState {
     // Releasing a modifier that was already down before Caps (for example,
     // Shift from the previous word) must not cancel a standalone Caps press.
     @discardableResult
-    mutating func modifierChanged(key: UInt16? = nil, otherModifier: Bool, commandModifier: Bool = false, folderSelectionActive: Bool = false, shortcutsEnabled: Bool = true, pressed: Bool = true) -> Result {
+    mutating func modifierChanged(key: UInt16? = nil, otherModifier: Bool, commandModifier: Bool = false, input: Input = .shortcuts, pressed: Bool = true) -> Result {
         if !pressed {
             return Result(swallow: key.map { consumed.remove($0) != nil } ?? false)
         }
         guard held else { return Result() }
-        let swallow = shortcutsEnabled && !folderSelectionActive
+        let swallow = input == .shortcuts
         if swallow, let key = key { consumed.insert(key) }
         if otherModifier || commandModifier { otherModifierGesture = true }
         chord = true
         return Result(swallow: swallow)
     }
-    // `bound`: the key opens an app by itself. `prefix`: two-key shortcuts start with
-    // the key. `comboBound`: `pendingKey` followed by this key is a two-key shortcut.
-    mutating func route(key: UInt16, down: Bool, repeated: Bool, bound: Bool, prefix: Bool = false, comboBound: Bool = false, windowKey: Bool = false, otherModifier: Bool = false, commandModifier: Bool = false, folderSelectionActive: Bool = false, folderCount: Int = 0, shortcutsEnabled: Bool = true) -> Result {
+    // `bound`: `pendingKeys` (none for the first key) followed by this key are exactly an
+    // app shortcut. `prefix`: a longer app shortcut starts with those keys.
+    mutating func route(key: UInt16, down: Bool, repeated: Bool, bound: Bool, prefix: Bool = false, windowKey: Bool = false, otherModifier: Bool = false, commandModifier: Bool = false, input: Input = .shortcuts, folderCount: Int = 0) -> Result {
+        let shortcuts = input == .shortcuts, picker = input == .folderPicker
         if key == KeyCode.hyper {
             if down {
                 // An autorepeat without a tracked press belongs to a gesture that was
@@ -111,19 +134,11 @@ struct KeyboardState {
                 }
                 return Result(swallow: true)
             }
-            let openSelection = held && folderSelectionActive && folderSelectionEntered
+            let openSelection = held && picker && folderSelectionEntered
             let standalone = held && !chord && !otherModifierGesture
             var result = Result(swallow: true, tap: standalone, openFolderSelection: openSelection)
             // Releasing Caps runs the shortcut that was pressed.
-            if held && sequenceValid && !sequence.isEmpty && shortcutsEnabled && !otherModifierGesture && !folderGesture {
-                if sequence.count == 2 {
-                    result.launch = sequence[0]; result.launchSecond = sequence[1]
-                } else if sequenceWindow {
-                    result.window = sequence[0]
-                } else if sequenceBound {
-                    result.launch = sequence[0]
-                }
-            }
+            if shortcuts { addShortcutActions(to: &result) }
             clearSequence()
             held = false
             pressedKeys = []
@@ -133,28 +148,30 @@ struct KeyboardState {
         // Only a new key press makes a chord. A release of a key that was still
         // down when Caps was pressed (fast typing) keeps the standalone Caps.
         if down { beginChord() }
-        if down && held && !repeated && pressedKeys.count < 2 && key != KeyCode.escape { pressedKeys.append(key) }
-        let stripCommand = held && folderSelectionActive && commandModifier && !otherModifier
+        let pressedBefore = pressedKeys
+        if down && held && !repeated && pressedKeys.count < Self.maxShortcutKeys
+            && key != KeyCode.escape && key != KeyCode.delete && !KeyCode.isReturn(key) { pressedKeys.append(key) }
+        let stripCommand = held && picker && commandModifier && !otherModifier
         if !down { return Result(swallow: consumed.remove(key) != nil, stripCommandModifier: stripCommand) }
         if consumed.contains(key) { return Result(swallow: true) }
         // Own all new keyboard input destined for the original app during Caps,
         // including invalid shortcuts, repeats and modified/cancelled gestures.
         // Clutch's own focused editors and Folders still receive their input.
         // The shortcut branches below all require this, so they need not insert again.
-        let takeOver = held && shortcutsEnabled && !folderSelectionActive
+        let takeOver = held && shortcuts
         if takeOver { consumed.insert(key) }
         // Caps + Space opens Folders, whenever Space comes during the hold: it takes over
         // from any shortcut or window preview started before it, so nothing else runs on
         // release. Its repeats and release stay consumed. When blocked (Control, Option or
         // Command, or after Escape), Space is consumed without an action.
-        if shortcutsEnabled && held && !folderSelectionActive && key == KeyCode.space && !repeated
+        if shortcuts && held && key == KeyCode.space && !repeated
             && !otherModifierGesture && !otherModifier && !commandModifier && !folderGesture && !escaped {
             folderGesture = true
             sequenceValid = false
             return Result(swallow: true, showFolders: true)
         }
         // Invalid numbers must not confirm the previously selected folder.
-        if held && folderSelectionActive && !otherModifier,
+        if held && picker && !otherModifier,
            let number = Self.numberKeys.firstIndex(of: key) {
             consumed.insert(key)
             guard !repeated else { return Result(swallow: true) }
@@ -162,25 +179,52 @@ struct KeyboardState {
             return Result(swallow: true, folderNumber: folderSelectionEntered ? number : nil)
         }
         // Only deliberate list navigation arms confirmation on Caps release.
-        if held && folderSelectionActive && !otherModifier && Self.selectionKeys.contains(key) {
+        if held && picker && !otherModifier && Self.selectionKeys.contains(key) {
             folderSelectionEntered = folderCount > 0
         }
         // While Caps stays held, letters select an existing row rather than
         // reaching the search field or its input method. Own their releases too.
-        if held && folderSelectionActive && !otherModifier && KeyCode.lettersAndDigits.contains(key) {
+        if held && picker && !otherModifier && KeyCode.lettersAndDigits.contains(key) {
             consumed.insert(key)
             return Result(swallow: true, folderJump: repeated ? nil : key)
         }
         // Escape cancels the whole Caps gesture: nothing runs on release (a window
         // preview is dropped) and the key does not reach the app.
-        if key == KeyCode.escape && held && shortcutsEnabled && !folderSelectionActive && !repeated {
+        if key == KeyCode.escape && held && shortcuts && !repeated {
             escaped = true
             sequenceValid = false
             return Result(swallow: true)
         }
-        let actionAllowed = shortcutsEnabled && held && !folderSelectionActive && !repeated && !escaped
+        // Return while Caps is held confirms: it runs now what releasing Caps would run,
+        // then the hold ends like after Escape (nothing more runs, nothing is shown).
+        // Return is never part of a shortcut.
+        if KeyCode.isReturn(key) && held && shortcuts && !repeated {
+            var result = Result(swallow: true)
+            if !escaped { addShortcutActions(to: &result) }
+            escaped = true
+            sequenceValid = false
+            return result
+        }
+        let actionAllowed = shortcuts && held && !repeated && !escaped
             && !otherModifierGesture && !otherModifier && !folderGesture && !commandModifier
         guard actionAllowed else { return Result(swallow: takeOver, stripCommandModifier: stripCommand) }
+        // Delete takes back the last app key, valid or not; with none it does nothing.
+        // In a window gesture it is an ordinary key (it cancels the preview).
+        if key == KeyCode.delete && !sequenceWindow {
+            if let step = steps.popLast() {
+                sequence = step.sequence; sequenceWindow = step.window
+                sequenceBound = step.bound; sequenceValid = step.valid
+                pressedKeys = step.pressedKeys
+            }
+            return Result(swallow: true)
+        }
+        // An app shortcut takes at most three keys: once three are in, later keys are
+        // ignored (consumed, without changing what releasing Caps runs).
+        if !sequenceWindow && pressedBefore.count >= Self.maxShortcutKeys {
+            return Result(swallow: true)
+        }
+        steps.append(Step(sequence: sequence, window: sequenceWindow, bound: sequenceBound,
+                          valid: sequenceValid, pressedKeys: pressedBefore))
         if sequence.isEmpty {
             // Window layout keys (arrows, −, =) take precedence over App List bindings.
             // Keep even an unbound first key in the sequence. It invalidates this
@@ -191,33 +235,49 @@ struct KeyboardState {
             sequenceValid = windowKey || bound || prefix
             return Result(swallow: true, windowPreview: windowKey ? key : nil)
         }
-        // The keys must match a shortcut exactly. A second key completes a two-key
-        // shortcut, including the same key again (Caps + M + M). Any other key, the
-        // first key again without Caps + M + M, or a third key means no shortcut runs.
+        // The keys must match a shortcut exactly. Each further key must complete or
+        // continue a shortcut, including the same key again (Caps + M + M). Any other
+        // key, or a repeated key no shortcut uses, means no shortcut runs. Keys after
+        // the third were already ignored above.
         // Window keys keep updating the preview (← again: 2/3, ↑ again: full, …);
         // any other key, Escape included, cancels it.
         if sequenceWindow {
             guard windowKey && sequenceValid else { sequenceValid = false; return Result(swallow: true) }
             return Result(swallow: true, windowPreview: key)
         }
-        if pendingKey != nil && comboBound {
+        if pendingKeys != nil && (bound || prefix) {
             sequence.append(key)
+            sequenceBound = bound
         } else {
             sequenceValid = false
         }
         return Result(swallow: true)
     }
+    // A recording field saved on Caps + Return: the rest of this hold runs nothing.
+    mutating func endHold() {
+        guard held else { return }
+        escaped = true
+        sequenceValid = false
+    }
+    // What ending this hold (Caps release, or Return) runs: the window action or the
+    // app shortcut pressed, if any.
+    private func addShortcutActions(to result: inout Result) {
+        guard held && sequenceValid && !sequence.isEmpty && !otherModifierGesture && !folderGesture else { return }
+        if sequenceWindow {
+            result.window = sequence[0]
+        } else if sequenceBound {
+            result.launchKeys = sequence
+        }
+    }
     private mutating func clearSequence() {
-        sequence = []; sequenceWindow = false; sequenceBound = false; sequenceValid = false
+        sequence = []; sequenceWindow = false; sequenceBound = false; sequenceValid = false; steps = []
     }
     // Focus changes cancel chord actions, but preserve standalone Caps and
     // ownership of swallowed shortcut releases.
     mutating func cancelGesture() {
         let standalone = held && !chord && !otherModifierGesture
-        let pendingReleases = consumed
-        reset()
+        capsReleaseMissed()
         held = standalone
-        consumed = pendingReleases
     }
     // Secure Event Input (password fields, Terminal's Secure Keyboard Entry) hides key
     // releases from event taps. Stop owning consumed keys the hardware reports as up,

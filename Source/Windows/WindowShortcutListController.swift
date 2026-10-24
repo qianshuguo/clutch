@@ -41,47 +41,14 @@ final class WindowShortcutListController: NSObject, NSTableViewDataSource, NSTab
             cell.toolTip = command.detail
             return cell
         }
-        let recorder = owner.addShortcutRecorder(to: cell, width: cellWidth,
-                                                 key: owner.windowShortcuts.key(for: command), table: tableView)
-        recorder.onStart = { [weak self] in
-            self?.owner.state.cancelGesture()
-            self?.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-        }
-        recorder.onKeys = { [weak self, weak recorder] code, _ in
-            guard let self = self, let recorder = recorder else { return false }
-            return self.owner.assignWindowShortcut(code, to: command, recorder: recorder)
-        }
+        owner.addShortcutRecorder(to: cell, width: cellWidth, for: .window(command),
+                                  keys: owner.windowShortcuts.key(for: command).map { [$0] } ?? [],
+                                  table: tableView, row: row)
         return cell
     }
 }
 
 extension AppDelegate {
-    // Same rule as App List: one key, one owner. Taking a key from an app (used alone or
-    // starting two-key shortcuts) or another action asks first and names who loses it.
-    func assignWindowShortcut(_ code: UInt16, to command: WindowCommand, recorder: KeyRecorder) -> Bool {
-        guard shortcutKeyAvailable(code) else { return false }
-        let otherCommand = windowShortcuts.command(for: code).flatMap { $0 == command ? nil : $0 }
-        let apps = firstKeyConflicts(code)
-        let appNames = apps.indices.map { bindings[$0].name }
-        let replacedNames: [String] = appNames + (otherCommand.map { [$0.title] } ?? [])
-        if !replacedNames.isEmpty {
-            recorder.cancelRecording()
-            let inUse = apps.inUse + (otherCommand.map { ["Caps + \(keyName(code) ?? "?") already runs \($0.title)."] } ?? [])
-            guard confirmShortcutReplacement(inUse: inUse, shortcut: keyName(code) ?? "?", newOwner: command.title,
-                                             losers: replacedNames) else { return false }
-        }
-        if !appNames.isEmpty {
-            for index in apps.indices { bindings[index].clearShortcut() }
-            saveBindings()
-        }
-        windowShortcuts.assign(code, to: command)
-        // Finish recording before reload removes the focused view.
-        recorder.recording = false
-        saveWindowShortcuts()
-        let replacement = replacedNames.isEmpty ? "" : ". Cleared shortcut for \(replacedNames.joined(separator: ", "))"
-        setStatus("Saved: \(command.title) → Caps + \(keyName(code) ?? "?")\(replacement)")
-        return true
-    }
     func saveWindowShortcuts() {
         windowShortcuts.save()
         windowShortcutList?.table.reloadData()
@@ -99,7 +66,7 @@ extension AppDelegate {
         button.autoresizingMask = [.minXMargin]
         content.addSubview(button)
         addListHelp([
-            ("Set a shortcut", "Hold Caps + a key"),
+            ("Set a shortcut", "Hold ⇪ + a key"),
             ("Holding Caps", "Preview; release Caps to apply"),
             ("Left / Right Half again", "Cycle ½ → ⅔ → ⅓"),
             ("Fill Height again", "Full height ⇄ full screen"),
@@ -107,22 +74,24 @@ extension AppDelegate {
             ("Hover an action", "Full description")
         ], to: content, trailing: button.frame.minX - 8)
     }
+    // App List, Folders and Websites shortcuts that start with a default window key lose them,
+    // after asking.
     func restoreDefaultWindowShortcuts() {
         (window?.firstResponder as? KeyRecorder)?.cancelRecording()
         let defaults = WindowShortcuts.defaults
-        let conflicts = bindings.filter { defaults.command(for: $0.key) != nil }
-        if !conflicts.isEmpty {
-            let list = conflicts.map { "\($0.name) (Caps + \(shortcutName($0.key, $0.secondKey) ?? "?"))" }.joined(separator: ", ")
-            guard confirmAlert("Restore default window shortcuts?",
-                               "These apps will stay in App List without a shortcut: \(list).",
-                               confirm: "Restore") else { return }
-            for index in bindings.indices where defaults.command(for: bindings[index].key) != nil {
-                bindings[index].clearShortcut()
-            }
-            saveBindings()
+        let taken = allShortcuts.filter { entry in
+            !entry.owner.isWindow && entry.keys.first.map { defaults.command(for: $0) != nil } == true
         }
+        if !taken.isEmpty {
+            let list = taken.map { "\($0.name) (\(shortcutLabel($0.keys)))" }.joined(separator: ", ")
+            guard confirmAlert("Restore default window shortcuts?",
+                               "These will stay in their lists without a shortcut: \(list).",
+                               confirm: "Restore") else { return }
+        }
+        let cleared: [ShortcutChange] = taken.map { (owner: $0.owner, keys: []) }
+        setShortcuts(cleared)
         windowShortcuts = defaults
         saveWindowShortcuts()
-        setStatus("Restored default window shortcuts.")
+        logStatus("Restored default window shortcuts.")
     }
 }

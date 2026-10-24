@@ -7,6 +7,9 @@ enum KeyCode {
     static let s: UInt16 = 1
     static let w: UInt16 = 13
     static let returnKey: UInt16 = 36
+    // Delete (⌫) while Caps is held takes back the last key, when using a shortcut and
+    // when recording one, so it cannot be part of a shortcut.
+    static let delete: UInt16 = 51
     static let space: UInt16 = 49
     static let escape: UInt16 = 53
     static let keypadEnter: UInt16 = 76
@@ -31,7 +34,20 @@ extension KeyCode {
     static let digits1to9: [UInt16] = (1...9).map { digit in keys.first { $0.0 == String(digit) }!.1 }
 }
 
+// The stored value for "no key" in saved App List and Windows shortcuts.
 let unassignedKey: UInt16 = .max
+
+// An App List, Folders or Websites entry: Caps + `keys`, in order (⇪M, ⇪M W, ⇪M W E); empty for none.
+protocol KeyShortcut {
+    var keys: [UInt16] { get set }
+}
+extension KeyShortcut {
+    var hasShortcut: Bool { !keys.isEmpty }
+    func matches(_ sequence: [UInt16]) -> Bool { hasShortcut && keys == sequence }
+    // A longer shortcut continues after `sequence` (Caps + M + W continues Caps + M).
+    func extends(_ sequence: [UInt16]) -> Bool { keys.count > sequence.count && keys.starts(with: sequence) }
+}
+
 let extraKeys: [UInt16: String] = [36:"Return",48:"Tab",49:"Space",51:"⌫",117:"⌦",
     123:"←",124:"→",125:"↓",126:"↑",115:"Home",119:"End",116:"PgUp",121:"PgDn",
     27:"−",24:"=",33:"[",30:"]",42:"\\",41:";",39:"'",43:",",47:".",44:"/",50:"`",

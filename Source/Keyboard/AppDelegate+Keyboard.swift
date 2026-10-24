@@ -26,7 +26,8 @@ extension AppDelegate {
     func start() {
         guard tap == nil, !starting else { return }
         guard AXIsProcessTrusted() else {
-            setStatus("Waiting for Accessibility access. Clutch will enable automatically.")
+            refreshControls()
+            logStatus("Waiting for Accessibility access. Clutch will enable automatically.")
             if permissionTimer == nil {
                 permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
                     guard let self = self else { return }
@@ -47,7 +48,6 @@ extension AppDelegate {
                 return Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue().handle(type, event)
             }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
             failKeyboard(status: "Could not monitor the keyboard. Allow Accessibility access and reopen Clutch.")
-            updateToggleMenuTitle("Retry Enabling")
             return
         }
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, created, 0) else {
@@ -60,7 +60,8 @@ extension AppDelegate {
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: created, enable: true)
-        setStatus("Enabled.")
+        refreshControls()
+        logStatus("Enabled.")
     }
     @discardableResult func stop() -> Bool {
         guard let error = teardown() else { return true }
@@ -74,20 +75,25 @@ extension AppDelegate {
         if let tap = tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         tap = nil; runLoopSource = nil; state.reset()
-        capsHUDActive = false; capsOverlay.reset()
+        capsOverlay.reset()
+        refreshControls()
         do { try mapping.restore() } catch { return error }
-        setStatus("Disabled. The original Caps Lock mapping has been restored.")
+        logStatus("Disabled. The original Caps Lock mapping has been restored.")
         return nil
     }
-    // Report the original failure only after cleanup succeeds. A restore error
-    // is already reported by stop(), and must not be overwritten by success text.
+    // Cleans up, then reports the original failure. When restoring Caps Lock fails
+    // too, stop() shows that error instead: it is the one the user must act on.
     func failKeyboard(error: Error? = nil, status: String? = nil) {
         wantsEnabled = false
         guard stop() else { return }
         if let error = error { showError(error) }
-        else if let status = status { setStatus(status) }
+        else if let status = status { logStatus(status) }
     }
-    func afterKeyEvent(_ work: @escaping () -> Void) { performOnMainRunLoop(work) }
+    // The KeyRecorder in Preferences that is recording a shortcut, if any.
+    var activeRecorder: KeyRecorder? {
+        guard let recorder = window?.firstResponder as? KeyRecorder, recorder.recording else { return nil }
+        return recorder
+    }
     var folderSelectionPanel: FolderPanel? {
         guard let panel = folderWindow, panel.isKeyWindow, panel.attachedSheet == nil,
               let table = folderTable else { return nil }
@@ -108,9 +114,7 @@ extension AppDelegate {
             if folderSelectionPanel === panel { return .folders(panel) }
             return .folderEditing
         }
-        if let recorder = window?.firstResponder as? KeyRecorder, recorder.recording {
-            return .shortcutRecording
-        }
+        if activeRecorder != nil { return .shortcutRecording }
         return .shortcuts
     }
     static let hiddenInputGap: TimeInterval = 0.3
@@ -128,7 +132,7 @@ extension AppDelegate {
             return Unmanaged.passUnretained(event)
         case .tapDisabledByUserInput:
             wantsEnabled = false
-            afterKeyEvent { [weak self] in
+            performOnMainRunLoop { [weak self] in
                 self?.failKeyboard(status: "Keyboard monitoring stopped. Caps Lock was restored. Enable Clutch to retry.")
             }
             return Unmanaged.passUnretained(event)
@@ -162,19 +166,14 @@ extension AppDelegate {
         lastKeyEventUptime = now
         // Context controls only chord actions. Standalone Caps always follows
         // the same state machine and system replay path.
-        let panel: FolderPanel?
-        let shortcutsEnabled: Bool
+        var panel: FolderPanel?
+        let input: KeyboardState.Input
         switch keyboardContext {
-        case .launchConfirmation, .shortcutRecording, .folderEditing:
-            panel = nil
-            shortcutsEnabled = false
-        case .folders(let activePanel):
-            panel = activePanel
-            shortcutsEnabled = false
-        case .shortcuts:
-            panel = nil
-            shortcutsEnabled = true
+        case .launchConfirmation, .shortcutRecording, .folderEditing: input = .inactive
+        case .folders(let activePanel): input = .folderPicker; panel = activePanel
+        case .shortcuts: input = .shortcuts
         }
+        let shortcutsEnabled = input == .shortcuts
         let otherModifier = !event.flags.intersection([.maskControl, .maskAlternate]).isEmpty
         let commandModifier = event.flags.contains(.maskCommand)
         // What a fresh key-down while Caps is held could mean. The shortcut itself is
@@ -182,63 +181,67 @@ extension AppDelegate {
         let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
         let eligible = shortcutsEnabled && type == .keyDown && state.held && key != KeyCode.hyper && key != KeyCode.space && !repeated
         let windowKey = eligible && windowShortcuts.command(for: key) != nil
-        let bound = eligible && !windowKey && bindings.contains(where: { $0.matches(key, nil) })
-        let prefix = eligible && !windowKey && bindings.contains(where: { $0.hasShortcut && $0.key == key && $0.secondKey != nil })
-        // Second key after the first (Caps + M + W).
-        let comboBound = eligible && state.pendingKey.map { first in bindings.contains(where: { $0.matches(first, key) }) } == true
+        // The app keys so far plus this one (Caps + M, then Caps + M + W, …). A window
+        // key takes precedence only as the first key; later it is an ordinary key.
+        let pendingKeys = state.pendingKeys ?? []
+        let candidate = pendingKeys + [key]
+        let appKey = eligible && (!pendingKeys.isEmpty || !windowKey)
+        // App List, Folders and Websites shortcuts share one set of keys.
+        let bound = appKey && shortcutTarget(for: candidate) != nil
+        let prefix = appKey && shortcutExtends(candidate)
         let capsWasHeld = state.held
         let result: KeyboardState.Result
         if type == .flagsChanged {
             let pressed = KeyboardState.modifierPressed(key: key, flags: event.flags.rawValue)
             result = state.modifierChanged(key: key, otherModifier: otherModifier, commandModifier: commandModifier,
-                                           folderSelectionActive: panel != nil, shortcutsEnabled: shortcutsEnabled,
-                                           pressed: pressed)
+                                           input: input, pressed: pressed)
         } else {
             result = state.route(key: key, down: type == .keyDown,
-                                 repeated: repeated, bound: bound, prefix: prefix, comboBound: comboBound,
+                                 repeated: repeated, bound: bound, prefix: prefix,
                                  windowKey: windowKey,
                                  otherModifier: otherModifier, commandModifier: commandModifier,
-                                 folderSelectionActive: panel != nil,
+                                 input: input,
                                  // Rows shown, so a search with no matches opens nothing.
-                                 folderCount: folderList?.table.numberOfRows ?? folders.count,
-                                 shortcutsEnabled: shortcutsEnabled)
+                                 folderCount: folderList?.table.numberOfRows ?? folders.count)
         }
         updateLaunchHint(shortcutsEnabled: shortcutsEnabled)
         // While a field records, Caps is input to the field, not a Caps Lock toggle.
-        let recordingWithCaps = (window?.firstResponder as? KeyRecorder)?.recording == true
-        updateCapsHUD(shortcutsEnabled: shortcutsEnabled, recordingWithCaps: recordingWithCaps, openingFolders: result.showFolders)
-        if routeCapsRecording(type, key: key, capsWasHeld: capsWasHeld, repeated: repeated, flags: event.flags) == true {
+        let recorder = activeRecorder
+        updateCapsHUD(shortcutsEnabled: shortcutsEnabled, recording: recorder != nil, openingFolders: result.showFolders)
+        if routeCapsRecording(type, key: key, to: recorder, capsWasHeld: capsWasHeld, repeated: repeated, flags: event.flags) {
             return nil
         }
         if result.showFolders {
-            afterKeyEvent { [weak self] in self?.showFolders() }
+            performOnMainRunLoop { [weak self] in self?.showFolders() }
         }
-        if result.tap && !recordingWithCaps {
-            afterKeyEvent { [weak self] in
+        if result.tap && recorder == nil {
+            performOnMainRunLoop { [weak self] in
                 guard let self = self else { return }
                 do { try self.replayCapsTap() }
                 catch { self.failKeyboard(error: error) }
             }
         }
-        if let first = result.launch,
-           let target = bindings.first(where: { $0.matches(first, result.launchSecond) }) {
-            afterKeyEvent { [weak self] in self?.activate(target) }
+        switch result.launchKeys.flatMap({ shortcutTarget(for: $0) }) {
+        case .app(let app)?: performOnMainRunLoop { [weak self] in self?.activate(app) }
+        case .folder(let folder)?: performOnMainRunLoop { [weak self] in self?.openFolderShortcut(folder) }
+        case .website(let site)?: performOnMainRunLoop { [weak self] in self?.openWebsiteShortcut(site) }
+        case nil: break
         }
         if let previewKey = result.windowPreview, let command = windowShortcuts.command(for: previewKey) {
-            afterKeyEvent { [weak self] in self?.previewWindowCommand(command) }
+            performOnMainRunLoop { [weak self] in self?.previewWindowCommand(command) }
         }
         if result.window != nil {
-            afterKeyEvent { [weak self] in self?.commitWindowPreview() }
+            performOnMainRunLoop { [weak self] in self?.commitWindowPreview() }
         } else if let session = windowPreview, !session.commitRequested, !state.windowPreviewActive {
             // Escape, another key, a modifier, a focus change, or Caps released without
             // a window shortcut: drop the preview.
-            afterKeyEvent { [weak self] in self?.cancelWindowPreview() }
+            performOnMainRunLoop { [weak self] in self?.cancelWindowPreview() }
         }
         if panel != nil, key == KeyCode.hyper, type == .keyDown, !capsWasHeld {
-            afterKeyEvent { [weak self] in self?.folderList?.resetCapsJump() }
+            performOnMainRunLoop { [weak self] in self?.folderList?.resetCapsJump() }
         }
         if let panel = panel, result.folderNumber != nil || result.folderJump != nil || result.openFolderSelection {
-            afterKeyEvent { [weak self, weak panel] in
+            performOnMainRunLoop { [weak self, weak panel] in
                 guard let self = self, let panel = panel, self.folderSelectionPanel === panel else { return }
                 if let number = result.folderNumber {
                     self.folderList?.resetCapsJump()
@@ -257,62 +260,35 @@ extension AppDelegate {
     // grown into the app card (updateLaunchHint) with the keys on top. Caps held
     // alone shows nothing: the keyboard light shows Caps Lock. Caps + Space hides the
     // pill at once as the Folders panel opens.
-    func updateCapsHUD(shortcutsEnabled: Bool, recordingWithCaps: Bool, openingFolders: Bool) {
+    func updateCapsHUD(shortcutsEnabled: Bool, recording: Bool, openingFolders: Bool) {
+        // The launch confirmation needs no Caps hint, the open Folders panel has its
+        // search field where the pill would be, and a window action shows its own preview.
+        let hidden = recording || showingLaunchConfirmation || folderWindow?.isVisible == true || state.windowGesture
         if openingFolders {
-            // The Folders panel replaces the pill at once.
-            capsHUDActive = false
             capsOverlay.hideKeys(immediately: true)
-            return
-        }
-        enum Display { case keys(String), app(String), hidden }
-        let display: Display
-        // The launch confirmation needs no Caps hint, and the open Folders panel has its
-        // search field where the pill would be.
-        // A window action shows its own preview; the Caps HUD gets out of the way.
-        if recordingWithCaps || showingLaunchConfirmation || folderWindow?.isVisible == true || state.windowGesture {
-            display = .hidden
-        } else if shortcutsEnabled && state.showsKeyHint {
-            let keys = state.pressedKeys.map { keyName($0) ?? "?" }.joined(separator: " ")
-            // Show the app card for a match; otherwise explicitly say no app matches.
-            display = capsOverlay.target != nil ? .app(keys) : .keys(keys)
+        } else if !hidden && shortcutsEnabled && state.showsKeyHint {
+            // The overlay updates its one window after the key event, together with
+            // the app from updateLaunchHint.
+            capsOverlay.showKeys(state.pressedKeys.map { keyName($0) ?? "?" }.joined(separator: " "))
         } else {
-            display = .hidden
-        }
-        if case .hidden = display {
-            guard capsHUDActive else { return }
-            capsHUDActive = false
             capsOverlay.hideKeys()
-            return
-        }
-        capsHUDActive = true
-        // Only records what to show; the overlay updates its one window after the key
-        // event, together with the app from updateLaunchHint.
-        switch display {
-        case .keys(let keys):
-            capsOverlay.showKeys(keys)
-        case .app(let keys):
-            // The same window grows into the app card and keeps the keys on top.
-            capsOverlay.showAppKeys(keys)
-        case .hidden:
-            break
         }
     }
     // App List fields are recorded the way shortcuts are used: keys pressed while Caps
     // is held go to the recording field (and not to the window), and releasing Caps
-    // saves them. Returns true when the event is consumed, nil when not recording.
-    func routeCapsRecording(_ type: CGEventType, key: UInt16, capsWasHeld: Bool,
-                            repeated: Bool, flags: CGEventFlags) -> Bool? {
-        guard type == .keyDown || type == .keyUp,
-              let recorder = window?.firstResponder as? KeyRecorder, recorder.recording else {
+    // saves them. Returns true when the event is consumed.
+    func routeCapsRecording(_ type: CGEventType, key: UInt16, to recorder: KeyRecorder?, capsWasHeld: Bool,
+                            repeated: Bool, flags: CGEventFlags) -> Bool {
+        guard type == .keyDown || type == .keyUp, let recorder = recorder else {
             // Releases are only owned while recording; later ones pass through.
             recordingCapsKeys.removeAll()
-            return nil
+            return false
         }
         if key == KeyCode.hyper {
             if type == .keyDown && !capsWasHeld && !repeated {
-                afterKeyEvent { [weak recorder] in recorder?.capsPressed() }
+                performOnMainRunLoop { [weak recorder] in recorder?.capsPressed() }
             } else if type == .keyUp && capsWasHeld {
-                afterKeyEvent { [weak recorder] in recorder?.capsReleased() }
+                performOnMainRunLoop { [weak recorder] in recorder?.capsReleased() }
             }
             return false
         }
@@ -320,8 +296,11 @@ extension AppDelegate {
         guard capsWasHeld,
               flags.intersection([.maskShift, .maskControl, .maskAlternate, .maskCommand]).isEmpty else { return false }
         recordingCapsKeys.insert(key)
+        // Caps + Return saves the field now; keys later in this hold must not run a
+        // shortcut once the field stops recording.
+        if KeyCode.isReturn(key) && !repeated { state.endHold() }
         if !repeated {
-            afterKeyEvent { [weak recorder] in recorder?.capsKeyPressed(key) }
+            performOnMainRunLoop { [weak recorder] in recorder?.capsKeyPressed(key) }
         }
         return true
     }

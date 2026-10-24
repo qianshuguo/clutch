@@ -69,50 +69,6 @@ enum WindowCommand: String, CaseIterable {
     }
 }
 
-// Caps + key for each window command, edited on the Windows page of Preferences.
-// Saved as JSON {command: key code} under DefaultsKey.windowShortcuts; unassigned is `unassignedKey`.
-struct WindowShortcuts: Equatable {
-    private var keys: [WindowCommand: UInt16]
-    static let defaults = WindowShortcuts(keys: Dictionary(uniqueKeysWithValues: WindowCommand.allCases.map { ($0, $0.defaultKey) }))
-
-    private init(keys: [WindowCommand: UInt16]) { self.keys = keys }
-
-    func key(for command: WindowCommand) -> UInt16 { keys[command] ?? unassignedKey }
-    func command(for key: UInt16) -> WindowCommand? {
-        guard key != unassignedKey else { return nil }
-        return WindowCommand.allCases.first { keys[$0] == key }
-    }
-    // One key belongs to one command: assigning it clears any other command using it.
-    mutating func assign(_ key: UInt16, to command: WindowCommand) {
-        for other in WindowCommand.allCases where other != command && keys[other] == key { keys[other] = unassignedKey }
-        keys[command] = key
-    }
-    mutating func clear(_ key: UInt16) {
-        for command in WindowCommand.allCases where keys[command] == key { keys[command] = unassignedKey }
-    }
-
-    // Commands missing from a save keep their defaults; unreadable data loads the defaults.
-    static func load(from defaults: UserDefaults = .standard) -> WindowShortcuts {
-        var result = Self.defaults
-        guard let data = defaults.data(forKey: DefaultsKey.windowShortcuts),
-              let stored = try? JSONDecoder().decode([String: UInt16].self, from: data) else { return result }
-        for command in WindowCommand.allCases {
-            if let key = stored[command.rawValue] { result.keys[command] = key }
-        }
-        // A hand-edited save could repeat a key; keep the first command that claims it.
-        var seen = Set<UInt16>()
-        for command in WindowCommand.allCases {
-            let key = result.key(for: command)
-            if key != unassignedKey && !seen.insert(key).inserted { result.keys[command] = unassignedKey }
-        }
-        return result
-    }
-    func save(to defaults: UserDefaults = .standard) {
-        let stored = Dictionary(uniqueKeysWithValues: WindowCommand.allCases.map { ($0.rawValue, key(for: $0)) })
-        if let data = try? JSONEncoder().encode(stored) { defaults.set(data, forKey: DefaultsKey.windowShortcuts) }
-    }
-}
-
 enum WindowAction: Equatable {
     // `step` indexes WindowLayout.halfFractions: repeating ← or → cycles 1/2 → 2/3 → 1/3.
     case leftHalf(step: Int), rightHalf(step: Int)

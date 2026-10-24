@@ -114,7 +114,7 @@ extension AppDelegate: NSToolbarDelegate {
         let applicationList = ApplicationListController(owner: self)
         self.applicationList = applicationList
         let table = applicationList.table
-        configureList(table, width: Self.preferenceSize.width, columnID: "app")
+        configureList(table, width: Self.preferenceSize.width, title: "Application")
         scroll.documentView = table
         apps.addSubview(scroll)
         addListHeader(to: apps, table: table, size: Self.preferenceSize)
@@ -123,7 +123,7 @@ extension AppDelegate: NSToolbarDelegate {
                         remove: { [weak self] in self?.removeBinding() }, itemName: "Application")
         let appsHelp = addListHelp([
             ("Caps + key, release Caps", "Switch to the app"),
-            ("Set a shortcut", "Hold Caps + 1 or 2 keys"),
+            ("Set a shortcut", "Hold ⇪ + up to 3 keys"),
             ("Press again", "Next window of that app"),
             ("Not running", "Asks first; Return opens it"),
             ("⌘F", "Search by app name"),
@@ -133,11 +133,12 @@ extension AppDelegate: NSToolbarDelegate {
         let folderContent = makeFoldersContent(size: Self.preferenceSize, presentation: .preferences)
         preferencesFolderList = folderContent.controller
         pages[2].addSubview(folderContent.content)
-        let windowsPage = pages[3]
+        addWebsitesPage(to: pages[3])
+        let windowsPage = pages[4]
         let windowScroll = makeListScroll(size: Self.preferenceSize, headerHeight: 28)
         let windowShortcutList = WindowShortcutListController(owner: self)
         self.windowShortcutList = windowShortcutList
-        configureList(windowShortcutList.table, width: Self.preferenceSize.width, columnID: "window")
+        configureList(windowShortcutList.table, width: Self.preferenceSize.width, title: "Action")
         windowScroll.documentView = windowShortcutList.table
         windowsPage.addSubview(windowScroll)
         addListHeader(to: windowsPage, table: windowShortcutList.table, size: Self.preferenceSize)
@@ -200,7 +201,7 @@ extension AppDelegate: NSToolbarDelegate {
     }
     @objc func changePage(_ sender: NSToolbarItem) { selectPage(sender.tag) }
     func selectPage(_ index: Int) {
-        (window?.firstResponder as? KeyRecorder)?.cancelRecording()
+        // Also ends a recording: KeyRecorder cancels when it resigns first responder.
         window?.makeFirstResponder(nil)
         selectedPage = index
         for (position, page) in pages.enumerated() { page.isHidden = position != index }

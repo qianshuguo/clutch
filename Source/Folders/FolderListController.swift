@@ -22,10 +22,20 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
         table.dataSource = self
         table.target = self
         table.doubleAction = #selector(doubleClick)
+        table.revealSelection = { [weak self] in
+            guard let self = self else { return }
+            self.owner.revealFolders(self.selectedFolderIndices)
+        }
         table.openSelection = { [weak self] in
             guard let self = self else { return }
             self.owner.openSelectedFolders(self.selectedFolderIndices, in: self.table)
         }
+        table.editSelection = { [weak self] in
+            guard let self = self, self.selectedFolderIndices.count == 1,
+                  let index = self.selectedFolderIndices.first else { return }
+            self.owner.editFolder(at: index, in: self.table)
+        }
+        table.focusesOnRightClick = presentation != .picker
         if presentation == .picker {
             // Typing filters the list instead of jumping to a name.
             table.allowsTypeSelect = false
@@ -45,9 +55,14 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
     deinit {
         if let observer = compositionObserver { NotificationCenter.default.removeObserver(observer) }
     }
+    // Settings: double-click edits the folder. The picker: it opens the selection.
     @objc private func doubleClick() {
-        guard folderIndex(forRow: table.clickedRow) != nil else { return }
-        owner.openSelectedFolders(selectedFolderIndices, in: table)
+        guard let index = folderIndex(forRow: table.clickedRow) else { return }
+        if presentation == .preferences {
+            owner.editFolder(at: index, in: table)
+        } else {
+            owner.openSelectedFolders(selectedFolderIndices, in: table)
+        }
     }
 
     // MARK: Search
@@ -137,8 +152,15 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
             .sorted { $0.1 != $1.1 ? $0.1 < $1.1 : $0.0 < $1.0 }
             .map { $0.0 }
     }
-    // Indexes into owner.folders of the rows shown, in row order.
-    var visibleIndices: [Int] { Self.ordered(owner.folders, query: filter) }
+    // Indexes into owner.folders of the rows shown, in row order. Ranking runs once
+    // per change of the search or the folders, not for every row AppKit asks about.
+    private var visibleCache: (filter: String, folders: [FolderEntry], indices: [Int])?
+    var visibleIndices: [Int] {
+        if let cache = visibleCache, cache.filter == filter, cache.folders == owner.folders { return cache.indices }
+        let indices = Self.ordered(owner.folders, query: filter)
+        visibleCache = (filter, owner.folders, indices)
+        return indices
+    }
     func folderIndex(forRow row: Int) -> Int? {
         let visible = visibleIndices
         return visible.indices.contains(row) ? visible[row] : nil
@@ -244,19 +266,12 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
         let cell = NSView(frame: NSRect(x: 0, y: 0, width: cellWidth, height: AppDelegate.appRowHeight))
         let folder = owner.folders[index]
         if columnIndex == 1 {
-            let shortcutWidth = presentation.shortcutReservedWidth
-            // Only Preferences shifts Path; the standalone picker keeps its layout.
-            let pathOffset = presentation.pathOffset
-            let path = owner.label(folder.path, frame: NSRect(x: ListGeometry.pathLeadingInset + pathOffset, y: AppDelegate.listNameFrame.minY,
-                                                  width: max(0, cellWidth - ListGeometry.pathLeadingInset - ListGeometry.trailingInset - shortcutWidth), height: AppDelegate.listNameFrame.height), size: 12)
-            path.autoresizingMask = [.width]
-            path.textColor = .secondaryLabelColor
-            path.lineBreakMode = .byTruncatingHead
-            path.alignment = .left
-            path.maximumNumberOfLines = 1
-            path.attributedStringValue = formattedFolderPath(folder.path)
-            cell.addSubview(path)
-            if presentation.showsShortcuts, row < 9 {
+            if presentation == .preferences {
+                // Preferences: the same shortcut field as App List.
+                owner.addShortcutRecorder(to: cell, width: cellWidth, for: .folder(path: folder.path),
+                                          keys: folder.keys, table: tableView, row: row)
+            } else if row < 9 {
+                // The picker: only the Caps number hint.
                 let hint = owner.label("⇪\(row + 1)", frame: NSRect(
                     x: cellWidth - ListGeometry.trailingInset - 28,
                     y: AppDelegate.listNameFrame.minY, width: 28, height: AppDelegate.listNameFrame.height), size: 12)
@@ -267,15 +282,14 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
             }
             return cell
         }
-        cell.addSubview(owner.makeListIcon(path: folder.path))
-        let name = FolderNameField(labelWithString: folder.name)
+        let icon = owner.makeListIcon(path: folder.path)
+        let name = NSTextField(labelWithString: folder.name)
         owner.configureListName(name, width: cellWidth)
-        name.folderTable = tableView
-        name.onRename = { [weak self] value in
-            guard let self = self, let index = self.owner.folders.firstIndex(where: { $0.path == folder.path }) else { return }
-            self.owner.folders[index].name = value
-            self.owner.saveFolders()
-        }
+        cell.addSubview(icon)
+        // No path column: pointing at the folder shows where it is ("~/Projects/Clutch").
+        let location = (folder.path as NSString).abbreviatingWithTildeInPath
+        cell.toolTip = location
+        name.toolTip = location
         cell.addSubview(name)
         return cell
     }
@@ -307,21 +321,5 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
     }
     func draggedFolderPaths(_ info: NSDraggingInfo) -> [String] {
         (info.draggingPasteboard.pasteboardItems ?? []).compactMap { $0.string(forType: owner.folderDragType) }
-    }
-    func formattedFolderPath(_ path: String) -> NSAttributedString {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .left
-        paragraph.lineBreakMode = .byTruncatingHead
-        let text = NSMutableAttributedString(string: path, attributes: [
-            .font: NSFont.systemFont(ofSize: 12),
-            .paragraphStyle: paragraph,
-            .foregroundColor: NSColor.tertiaryLabelColor
-        ])
-        let leaf = URL(fileURLWithPath: path).lastPathComponent
-        let range = (path as NSString).range(of: leaf, options: .backwards)
-        if !leaf.isEmpty, range.location != NSNotFound {
-            text.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: range)
-        }
-        return text
     }
 }

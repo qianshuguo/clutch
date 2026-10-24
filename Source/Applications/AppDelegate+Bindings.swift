@@ -81,76 +81,158 @@ final class ApplicationWindowCycle {
     }
 }
 
+// What an App List, Folders or Websites shortcut opens.
+enum ShortcutTarget {
+    case app(AppShortcut), folder(FolderEntry), website(WebsiteEntry)
+    var name: String {
+        switch self {
+        case .app(let app): return app.name
+        case .folder(let folder): return folder.name
+        case .website(let site): return site.name
+        }
+    }
+    // Identifies the target: the app's or folder's path, or the website's address.
+    var path: String {
+        switch self {
+        case .app(let app): return app.path
+        case .folder(let folder): return folder.path
+        case .website(let site): return site.url
+        }
+    }
+    // Shown on the HUD card.
+    var icon: NSImage {
+        switch self {
+        case .app(let app): return NSWorkspace.shared.icon(forFile: app.path)
+        case .folder(let folder): return NSWorkspace.shared.icon(forFile: folder.path)
+        case .website: return WebsiteEntry.browserIcon
+        }
+    }
+}
+
+// Whoever holds a shortcut. App List, Folders and Websites share one set of Caps
+// shortcuts (up to three keys); a window action holds a single key and takes precedence.
+enum ShortcutOwner: Equatable {
+    case app(path: String), folder(path: String), website(url: String), window(WindowCommand)
+    var isWindow: Bool { if case .window = self { return true }; return false }
+}
+
 extension AppDelegate {
-    // Called for every key event the tap handles: shows the app that releasing Caps
-    // would open, or hides the hint when there is none (including on Caps release).
+    // The App List, Folders or Websites entry Caps + `keys` opens.
+    func shortcutTarget(for keys: [UInt16]) -> ShortcutTarget? {
+        if let app = bindings.first(where: { $0.matches(keys) }) { return .app(app) }
+        if let folder = folders.first(where: { $0.matches(keys) }) { return .folder(folder) }
+        return websites.first { $0.matches(keys) }.map { .website($0) }
+    }
+    // A longer App List, Folders or Websites shortcut starts with `keys`.
+    func shortcutExtends(_ keys: [UInt16]) -> Bool {
+        bindings.contains { $0.extends(keys) } || folders.contains { $0.extends(keys) }
+            || websites.contains { $0.extends(keys) }
+    }
+    // Called for every key event the tap handles: shows what releasing Caps would
+    // open, or hides the hint when there is none (including on Caps release).
     func updateLaunchHint(shortcutsEnabled: Bool) {
-        let hint = shortcutsEnabled ? state.launchCandidate.flatMap { candidate in
-            bindings.first { $0.matches(candidate.first, candidate.second) }
-        } : nil
+        let hint = shortcutsEnabled ? state.launchCandidate.flatMap { shortcutTarget(for: $0) } : nil
         guard hint?.path != capsOverlay.target else { return }
         // Applied together with the keys from updateCapsHUD, after the key event.
         capsOverlay.setApp(hint)
     }
 
-    // `second` makes a two-key shortcut (Caps + code + second). Shortcuts run when Caps
-    // is released, so Caps + M and Caps + M + W can belong to different apps.
-    // Taking a shortcut asks first and names who loses it.
-    func assignShortcut(_ code: UInt16, _ second: UInt16? = nil, to binding: AppShortcut, recorder: KeyRecorder) -> Bool {
-        guard bindings.contains(where: { $0.path == binding.path }) else { return false }
-        guard shortcutKeyAvailable(code), second.map({ self.shortcutKeyAvailable($0) }) ?? true else { return false }
-        let conflicts = shortcutConflicts(code, second, excluding: binding.path)
-        // A window action on the first key takes precedence; the Windows page shares this rule.
-        let windowOwner = windowShortcuts.command(for: code)
-        var inUse = conflicts.inUse
-        if let command = windowOwner { inUse.append("Caps + \(keyName(code) ?? "?") already runs \(command.title).") }
-        let losers = conflicts.indices.map { bindings[$0].name } + (windowOwner.map { [$0.title] } ?? [])
-        let name = shortcutName(code, second) ?? "?"
-        if !losers.isEmpty {
-            recorder.cancelRecording()
-            guard confirmShortcutReplacement(inUse: inUse, shortcut: name, newOwner: binding.name, losers: losers) else { return false }
+    // Every shortcut in App List, Folders, Websites and Windows, in that order.
+    typealias ShortcutEntry = (owner: ShortcutOwner, name: String, keys: [UInt16])
+    var allShortcuts: [ShortcutEntry] {
+        let apps: [ShortcutEntry] = bindings.map { (owner: ShortcutOwner.app(path: $0.path), name: $0.name, keys: $0.keys) }
+        let folderEntries: [ShortcutEntry] = folders.map { (owner: ShortcutOwner.folder(path: $0.path), name: $0.name, keys: $0.keys) }
+        let websiteEntries: [ShortcutEntry] = websites.map { (owner: ShortcutOwner.website(url: $0.url), name: $0.name, keys: $0.keys) }
+        let actions: [ShortcutEntry] = WindowCommand.allCases.map { command in
+            let keys: [UInt16] = windowShortcuts.key(for: command).map { [$0] } ?? []
+            return (owner: ShortcutOwner.window(command), name: command.title, keys: keys)
         }
-        guard let index = bindings.firstIndex(where: { $0.path == binding.path }) else { return false }
-        for otherIndex in conflicts.indices { bindings[otherIndex].clearShortcut() }
-        bindings[index].key = code
-        bindings[index].secondKey = second
+        return apps + folderEntries + websiteEntries + actions
+    }
+    // The shortcuts `owner` would take by using `keys`, with their names and a line
+    // per reason. App List, Folders and Websites conflict on exactly the same keys, and
+    // with a window action on the first key. A window action takes every App List,
+    // Folders and Websites shortcut that starts with its key.
+    func shortcutConflicts(_ keys: [UInt16], for owner: ShortcutOwner) -> (owners: [ShortcutOwner], names: [String], inUse: [String]) {
+        guard let first = keys.first else { return ([], [], []) }
+        let others = allShortcuts.filter { $0.owner != owner && !$0.keys.isEmpty }
+        let entries = others.filter { !$0.owner.isWindow }
+        let label = shortcutLabel(keys)
+        let same = entries.filter { $0.keys == keys }
+        let longer = owner.isWindow ? entries.filter { $0.keys.count > 1 && $0.keys.first == first } : []
+        let action = others.filter { $0.owner.isWindow && $0.keys == [first] }
+        var inUse: [String] = []
+        if !same.isEmpty { inUse.append("\(label) already opens \(listNames(same.map { $0.name })).") }
+        if !longer.isEmpty {
+            inUse.append("\(label) already starts \(listNames(longer.map { "\($0.name) (\(shortcutLabel($0.keys)))" })).")
+        }
+        if let command = action.first { inUse.append("\(shortcutLabel([first])) already runs \(command.name).") }
+        let taken: [ShortcutEntry] = same + longer + action
+        return (taken.map { $0.owner }, taken.map { $0.name }, inUse)
+    }
+    // `keys` are pressed in order while Caps is held: 1 to AppShortcut.maxKeys of them
+    // (⇪M, ⇪M W, ⇪M W E), one for a window action. Shortcuts run when Caps is released,
+    // so ⇪M, ⇪M W and ⇪M W E can belong to different owners. Taking a shortcut asks
+    // first and names who loses it.
+    func assignShortcut(_ keys: [UInt16], to owner: ShortcutOwner, recorder: KeyRecorder) -> Bool {
+        guard !keys.isEmpty, keys.count <= (owner.isWindow ? 1 : AppShortcut.maxKeys),
+              let name = allShortcuts.first(where: { $0.owner == owner })?.name else { return false }
+        guard keys.allSatisfy({ shortcutKeyAvailable($0) }) else { return false }
+        let conflicts = shortcutConflicts(keys, for: owner)
+        let label = shortcutLabel(keys)
+        if !conflicts.owners.isEmpty {
+            recorder.cancelRecording()
+            guard confirmShortcutReplacement(inUse: conflicts.inUse, shortcut: label, newOwner: name,
+                                             losers: conflicts.names) else { return false }
+        }
         // Finish recording before reload removes the focused view.
         recorder.recording = false
-        saveBindings()
-        if windowOwner != nil {
-            windowShortcuts.clear(code)
-            saveWindowShortcuts()
-        }
-        let replacement = losers.isEmpty ? "" : ". Cleared shortcut for \(losers.joined(separator: ", "))"
-        setStatus("Saved: \(binding.name) → Caps + \(name)\(replacement)")
+        let cleared: [ShortcutChange] = conflicts.owners.map { (owner: $0, keys: []) }
+        setShortcuts(cleared + [(owner: owner, keys: keys)])
+        let replacement = conflicts.names.isEmpty ? "" : ". Cleared shortcut for \(conflicts.names.joined(separator: ", "))"
+        logStatus("Saved: \(name) → \(label)\(replacement)")
         return true
     }
-    // Other apps that already use exactly Caps + code (+ second).
-    func shortcutConflicts(_ code: UInt16, _ second: UInt16?, excluding path: String?) -> (indices: [Int], inUse: [String]) {
-        let same = bindings.indices.filter { bindings[$0].path != path && bindings[$0].matches(code, second) }
-        guard !same.isEmpty else { return ([], []) }
-        return (same, ["Caps + \(shortcutName(code, second) ?? "?") already opens \(listNames(same.map { bindings[$0].name }))."])
+    // The ✕ in a shortcut field: the entry stays listed without a shortcut.
+    func clearShortcut(of owner: ShortcutOwner) {
+        guard let entry = allShortcuts.first(where: { $0.owner == owner }), !entry.keys.isEmpty else { return }
+        setShortcuts([(owner: owner, keys: [])])
+        logStatus("Cleared shortcut for \(entry.name).")
     }
-    // Apps a window action on `code` would take: window keys win over app shortcuts,
-    // including two-key shortcuts that start with the key.
-    func firstKeyConflicts(_ code: UInt16) -> (indices: [Int], inUse: [String]) {
-        let others = bindings.indices.filter { bindings[$0].hasShortcut && bindings[$0].key == code }
-        let alone = others.filter { bindings[$0].secondKey == nil }
-        let starts = others.filter { bindings[$0].secondKey != nil }
-        let key = keyName(code) ?? "?"
-        var inUse: [String] = []
-        if !alone.isEmpty { inUse.append("Caps + \(key) already opens \(listNames(alone.map { bindings[$0].name })).") }
-        if !starts.isEmpty {
-            let names = starts.map { "\(bindings[$0].name) (\(shortcutName(code, bindings[$0].secondKey) ?? "?"))" }
-            inUse.append("Caps + \(key) already starts \(listNames(names)).")
+    // Applies the changes in order (empty keys clear), saving each changed list once.
+    typealias ShortcutChange = (owner: ShortcutOwner, keys: [UInt16])
+    func setShortcuts(_ changes: [ShortcutChange]) {
+        var appsChanged = false, foldersChanged = false, websitesChanged = false, windowsChanged = false
+        for change in changes {
+            switch change.owner {
+            case .app(let path):
+                guard let index = bindings.firstIndex(where: { $0.path == path }) else { continue }
+                bindings[index].keys = change.keys; appsChanged = true
+            case .folder(let path):
+                guard let index = folders.firstIndex(where: { $0.path == path }) else { continue }
+                folders[index].keys = change.keys; foldersChanged = true
+            case .website(let url):
+                guard let index = websites.firstIndex(where: { $0.url == url }) else { continue }
+                websites[index].keys = change.keys; websitesChanged = true
+            case .window(let command):
+                if let key = change.keys.first { windowShortcuts.assign(key, to: command) }
+                else if let key = windowShortcuts.key(for: command) { windowShortcuts.clear(key) }
+                windowsChanged = true
+            }
         }
-        return (alone + starts, inUse)
+        if appsChanged { saveBindings() }
+        if foldersChanged { saveFolders() }
+        if websitesChanged { saveWebsites() }
+        if windowsChanged { saveWindowShortcuts() }
     }
-    // Caps + Space opens Folders, so neither list can take it.
+    // Caps + Space opens Folders, Caps + Delete takes back a key and Caps + Return
+    // confirms, so no list can take them.
     func shortcutKeyAvailable(_ code: UInt16) -> Bool {
-        guard code == KeyCode.space else { return true }
+        guard code == KeyCode.space || code == KeyCode.delete || KeyCode.isReturn(code) else { return true }
         NSSound.beep()
-        setStatus("Caps + Space is reserved for Folders. Choose another key.")
+        let use = code == KeyCode.space ? "Folders"
+            : code == KeyCode.delete ? "taking back keys while Caps is held" : "confirming"
+        logStatus("\(shortcutLabel([code])) is reserved for \(use). Choose another key.")
         return false
     }
     // "A", "A and B", "A, B and C".
@@ -158,11 +240,12 @@ extension AppDelegate {
         guard names.count > 1 else { return names.first ?? "" }
         return names.dropLast().joined(separator: ", ") + " and " + names.last!
     }
-    // Example: "Caps + M already opens Mail." / "To use Caps + M + W for Word, Mail will lose its shortcut."
+    // Example: "⇪M already opens Mail." / "To use ⇪M W for Word, Mail will lose its shortcut."
+    // `shortcut` is the full label, ⇪ included.
     func confirmShortcutReplacement(inUse: [String], shortcut: String, newOwner: String, losers: [String]) -> Bool {
         let loses = losers.count == 1 ? "will lose its shortcut" : "will lose their shortcuts"
         return confirmAlert(inUse.joined(separator: "\n"),
-                            "To use Caps + \(shortcut) for \(newOwner), \(listNames(losers)) \(loses).",
+                            "To use \(shortcut) for \(newOwner), \(listNames(losers)) \(loses).",
                             confirm: "Replace")
     }
     // Return confirms and Escape cancels, whichever button has focus.
@@ -187,7 +270,7 @@ extension AppDelegate {
             ("Preview",35,"/System/Applications/Preview.app"),              // Caps + P
             ("Reminders",15,"/System/Applications/Reminders.app")]          // Caps + R
         return candidates.filter { FileManager.default.fileExists(atPath: $0.2) }.map {
-            AppShortcut(key: $0.1, name: $0.0, path: $0.2, bundleID: Bundle(path: $0.2)?.bundleIdentifier)
+            AppShortcut(keys: [$0.1], name: $0.0, path: $0.2, bundleID: Bundle(path: $0.2)?.bundleIdentifier)
         }
     }
     // Falls back to the default list when nothing is saved. Unreadable saved data is
@@ -216,13 +299,13 @@ extension AppDelegate {
                 self.applicationList?.reveal(bindingAt: index)
                 return
             }
-            self.bindings.append(AppShortcut(key:unassignedKey,name:name,path:url.path,bundleID:bundle.bundleIdentifier))
+            self.bindings.append(AppShortcut(name: name, path: url.path, bundleID: bundle.bundleIdentifier))
             self.bindings.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             self.saveBindings()
             if let index = self.bindings.firstIndex(where: { $0.path == url.path }) {
                 self.applicationList?.reveal(bindingAt: index)
             }
-            self.setStatus("Added \(name). Click its shortcut field to assign a key.")
+            self.logStatus("Added \(name). Click its shortcut field to assign a key.")
         }
     }
     // Rows may be filtered by the search field, so selected rows are mapped back to

@@ -5,34 +5,46 @@ extension AppDelegate: NSMenuItemValidation {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "⇪+"
         let menu = NSMenu()
-        let settingsItem = NSMenuItem(title: "Preferences", action: #selector(showSettings), keyEquivalent: ",")
-        settingsItem.target = self; menu.addItem(settingsItem)
-        let foldersItem = NSMenuItem(title: "Folders…", action: #selector(showFolders), keyEquivalent: "")
-        foldersItem.target = self; menu.addItem(foldersItem)
-        let pauseItem = NSMenuItem(title: "Enable Clutch", action: #selector(toggle), keyEquivalent: "s")
-        pauseItem.target = self; menu.addItem(pauseItem)
+        @discardableResult
+        func add(_ title: String, _ action: Selector, _ key: String, hidden: Bool = false) -> NSMenuItem {
+            let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            menuItem.target = self
+            // Hidden items keep their shortcut in the app menu below.
+            menuItem.isHidden = hidden
+            menuItem.allowsKeyEquivalentWhenHidden = hidden
+            menu.addItem(menuItem)
+            return menuItem
+        }
+        add("Preferences", #selector(showSettings), ",")
+        add("Close Window", #selector(closeSettings), "w", hidden: true)
+        add("Find", #selector(findApplication), "f", hidden: true)
+        add("Picker…", #selector(showFolders), "")
+        let toggleItem = add("Enable Clutch", #selector(toggle), "s")
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit Clutch", action: #selector(quitApp), keyEquivalent: "q")
-        quit.target = self; menu.addItem(quit)
-        let closeItem = NSMenuItem(title: "Close Window", action: #selector(closeSettings), keyEquivalent: "w")
-        closeItem.target = self
-        closeItem.isHidden = true
-        closeItem.allowsKeyEquivalentWhenHidden = true
-        menu.insertItem(closeItem, at: 1)
-        let findItem = NSMenuItem(title: "Find", action: #selector(findApplication), keyEquivalent: "f")
-        findItem.target = self
-        findItem.isHidden = true
-        findItem.allowsKeyEquivalentWhenHidden = true
-        menu.insertItem(findItem, at: 2)
+        add("Quit Clutch", #selector(quitApp), "q")
         item.menu = menu
         // App-scoped shortcuts; Command-S in another app keeps its normal meaning.
         let main = NSMenu()
         let root = NSMenuItem(); root.submenu = menu.copy() as? NSMenu
-        main.addItem(root); NSApp.mainMenu = main
-        toggleMenuItems = [pauseItem] + (root.submenu?.items.filter { $0.action == #selector(toggle) } ?? [])
+        main.addItem(root)
+        // Text fields get ⌘X, ⌘C, ⌘V, ⌘A and ⌘Z only through these menu items (Clutch has
+        // no other main menu); they go to whatever field or list has focus.
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let edit = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        edit.submenu = editMenu
+        main.addItem(edit)
+        NSApp.mainMenu = main
+        toggleMenuItems = [toggleItem] + (root.submenu?.items.filter { $0.action == #selector(toggle) } ?? [])
     }
-    func updateToggleMenuTitle(_ title: String? = nil) {
-        let title = title ?? (tap != nil ? "Disable Clutch" : (wantsEnabled ? "Cancel Enabling" : "Enable Clutch"))
+    func updateToggleMenuTitle() {
+        let title = tap != nil ? "Disable Clutch" : (wantsEnabled ? "Cancel Enabling" : "Enable Clutch")
         for item in toggleMenuItems { item.title = title }
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -43,13 +55,18 @@ extension AppDelegate: NSMenuItemValidation {
         if menuItem.action == #selector(closeSettings) { return window?.isVisible == true || folderWindow?.isVisible == true }
         return true
     }
-    func setStatus(_ message: String) {
+    // Brings the toggle title and Preferences controls up to date with the enabled state.
+    func refreshControls() {
         updateToggleMenuTitle()
         syncPreferences()
+    }
+    // Clutch has no status line; what happened goes to the system log.
+    func logStatus(_ message: String) {
         NSLog("Clutch: %@", message)
     }
     func showError(_ error: Error) {
-        setStatus(error.localizedDescription)
+        logStatus(error.localizedDescription)
+        refreshControls()
         let alert = NSAlert(); alert.messageText = "Clutch"; alert.informativeText = error.localizedDescription
         alert.runModal()
     }

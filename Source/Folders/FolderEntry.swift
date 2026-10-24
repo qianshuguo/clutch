@@ -1,8 +1,35 @@
 import Foundation
 
-struct FolderEntry: Codable {
+struct FolderEntry: Codable, Equatable, KeyShortcut {
     var name: String
     var path: String
+    // Caps + these keys, in order, opens the folder from any app (⇪D, ⇪D W, ⇪D W E).
+    var keys: [UInt16]
+
+    init(name: String, path: String, keys: [UInt16] = []) {
+        self.name = name; self.path = path; self.keys = keys
+    }
+
+    // The folder's own name, as Finder shows it now ("Documents", or "文稿" in Chinese).
+    // A new entry starts with it; Edit can change `name`, and an empty name in Edit goes
+    // back to it. The folder on disk is never renamed.
+    var originalName: String { FileManager.default.displayName(atPath: path) }
+    var isRenamed: Bool { name != originalName }
+
+    // Saved under "shortcut", left out when there is none.
+    private enum CodingKeys: String, CodingKey { case name, path, keys = "shortcut" }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        path = try container.decode(String.self, forKey: .path)
+        keys = try container.decodeIfPresent([UInt16].self, forKey: .keys) ?? []
+    }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(path, forKey: .path)
+        if !keys.isEmpty { try container.encode(keys, forKey: .keys) }
+    }
 }
 
 extension FileManager {

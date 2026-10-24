@@ -59,16 +59,12 @@ final class CenteredOverlayScroller: NSScroller {
 }
 
 enum ListGeometry {
-    static let pathLeadingInset: CGFloat = 12
-    // The field takes the space the separate “Caps +” label used to share with it.
-    static let shortcutRecorderWidth: CGFloat = 166
-    // Right-aligned with the column's trailing edge.
-    static func shortcutOrigin(in column: NSRect) -> CGFloat {
-        column.maxX - shortcutRecorderWidth
-    }
+    static let shortcutRecorderWidth: CGFloat = 130
+    // A label's text starts this far inside its frame; the Shortcut header's text lines
+    // up with the left edge of the shortcut fields below it, which end at the column's edge.
+    static let labelTextInset: CGFloat = 2
     static let leadingInset: CGFloat = 16
     static let trailingInset: CGFloat = 12
-    static let detailColumnOffset: CGFloat = 12
 }
 
 // Match Mos's shared backdrop; lists and scrollers reveal this same surface.
@@ -122,7 +118,6 @@ final class PlainListHeaderView: NSView {
     override func layout() {
         super.layout()
         guard let table = tableView, table.tableColumns.count == 2 else { return }
-        let folders = table.tableColumns[0].identifier.rawValue == "folder"
         let firstColumn = table.tableColumns[0]
         let secondColumn = table.tableColumns[1]
         let firstBody = table.numberOfRows > 0 ? table.frameOfCell(atColumn: 0, row: 0)
@@ -132,7 +127,7 @@ final class PlainListHeaderView: NSView {
         firstLabel.stringValue = firstColumn.title
         secondLabel.stringValue = secondColumn.title
         firstLabel.frame = NSRect(x: firstBody.minX + ListGeometry.leadingInset, y: 7, width: max(0, firstBody.width - ListGeometry.leadingInset - ListGeometry.trailingInset), height: 18)
-        let secondX = folders ? secondBody.minX + ListGeometry.pathLeadingInset + FolderListPresentation.preferences.pathOffset : ListGeometry.shortcutOrigin(in: secondBody)
+        let secondX = secondBody.maxX - ListGeometry.shortcutRecorderWidth - ListGeometry.labelTextInset
         secondLabel.frame = NSRect(x: secondX, y: 7, width: max(0, secondBody.maxX - secondX), height: 18)
         bottomRule.frame = NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1)
     }
@@ -193,15 +188,12 @@ final class ListActionButton: NSButton {
     @objc private func invoke() { handler() }
 }
 
-// Explicit presentation settings: headers and shortcut hints are independent
-// properties of the presentation, rather than proxies for unrelated behavior.
+// The Caps + Space picker panel, or the Folders page of Preferences (with a header
+// and shortcut fields).
 enum FolderListPresentation {
     case picker, preferences
     var headerHeight: CGFloat { self == .preferences ? 28 : 0 }
     var fitsTableToViewport: Bool { self == .picker }
-    var showsShortcuts: Bool { self == .picker }
-    var shortcutReservedWidth: CGFloat { self == .picker ? 40 : 0 }
-    var pathOffset: CGFloat { self == .preferences ? ListGeometry.detailColumnOffset : 0 }
     // The standalone panel has no surrounding chrome. With the 6pt selection inset
     // and the panel's 6pt top allowance, this puts rows 10pt from the side and top edges.
     var edgeInset: CGFloat { self == .picker ? 4 : 0 }
@@ -210,6 +202,22 @@ enum FolderListPresentation {
 enum ListSelection {
     static func proposed(_ indexes: IndexSet, in table: NSTableView) -> IndexSet {
         NSApp.currentEvent?.type == .leftMouseDragged ? table.selectedRowIndexes : indexes
+    }
+    // A right-click selects the clicked row unless it is already part of the selection,
+    // like Finder, so the context menu acts on it. `focus` also makes the table first
+    // responder so the selection shows in the accent color (not for the Folders picker,
+    // whose search field keeps focus). Drawn now: the menu's tracking loop starts before
+    // the next display pass. nil outside the rows.
+    @discardableResult
+    static func selectForMenu(_ event: NSEvent, in table: NSTableView, focus: Bool = true) -> Int? {
+        let row = table.row(at: table.convert(event.locationInWindow, from: nil))
+        guard row >= 0 else { return nil }
+        if focus, table.window?.firstResponder !== table { table.window?.makeFirstResponder(table) }
+        if !table.selectedRowIndexes.contains(row) {
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+        table.displayIfNeeded()
+        return row
     }
     // False when no index was valid, so there is nothing to save. Callers reselect by
     // table row, since a search may be filtering the rows.

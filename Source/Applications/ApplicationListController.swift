@@ -18,7 +18,7 @@ final class ApplicationListController: NSObject, NSTableViewDataSource, NSTableV
         table.dataSource = self
         table.allowsMultipleSelection = true
         // Typing jumps to an application by name; shortcut fields take no part
-        // (see typeSelectStringFor), since they all start with “Caps +”.
+        // (see typeSelectStringFor), since they all start with “⇪”.
         table.allowsTypeSelect = true
     }
 
@@ -29,9 +29,14 @@ final class ApplicationListController: NSObject, NSTableViewDataSource, NSTableV
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty || shortcut.name.localizedStandardContains(trimmed)
     }
-    // Indexes into owner.bindings of the rows shown, in row order.
+    // Indexes into owner.bindings of the rows shown, in row order, worked out once per
+    // change of the search or the list rather than for every row AppKit asks about.
+    private var visibleCache: (filter: String, bindings: [AppShortcut], indices: [Int])?
     var visibleIndices: [Int] {
-        owner.bindings.indices.filter { Self.matches(owner.bindings[$0], query: filter) }
+        if let cache = visibleCache, cache.filter == filter, cache.bindings == owner.bindings { return cache.indices }
+        let indices = owner.bindings.indices.filter { Self.matches(owner.bindings[$0], query: filter) }
+        visibleCache = (filter, owner.bindings, indices)
+        return indices
     }
     func bindingIndex(forRow row: Int) -> Int? {
         let visible = visibleIndices
@@ -123,17 +128,8 @@ final class ApplicationListController: NSObject, NSTableViewDataSource, NSTableV
             cell.addSubview(name)
             return cell
         }
-        let recorder = owner.addShortcutRecorder(to: cell, width: cellWidth, key: binding.key,
-                                                 secondKey: binding.secondKey, table: tableView)
-        recorder.onStart = { [weak self] in
-            self?.owner.state.cancelGesture()
-            self?.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-        }
-        recorder.maxKeys = 2
-        recorder.onKeys = { [weak self, weak recorder] code, second in
-            guard let self = self, let recorder = recorder else { return false }
-            return self.owner.assignShortcut(code, second, to: binding, recorder: recorder)
-        }
+        owner.addShortcutRecorder(to: cell, width: cellWidth, for: .app(path: binding.path),
+                                  keys: binding.keys, table: tableView, row: row)
         return cell
     }
 }

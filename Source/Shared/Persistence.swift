@@ -5,10 +5,10 @@ enum DefaultsKey {
     static let enabled = "Enabled"
     static let shortcuts = "Bindings"
     static let folders = "Folders"
+    static let websites = "Websites"
     static let windowShortcuts = "WindowShortcuts"
     static let hideStatusBarIcon = "HideStatusBarIcon"
     static let capsMappingRecovery = "CapsMappingRecovery"
-    static let migratedLegacyPreferences = "MigratedLegacyPreferences"
 }
 
 enum StoredList {

@@ -2,7 +2,7 @@ import Cocoa
 
 // One HUD window for everything Caps shows, in the upper part of the screen where
 // Spotlight's field sits. It changes size instead of being swapped for another window:
-// - keys: the keys pressed while Caps is held, ⇪ followed by the first two keys
+// - keys: the keys pressed while Caps is held, ⇪ followed by up to three keys
 //   ("⇪ M W"), centered, with "No matching app" beneath them;
 // - app: when the keys select an app, the same window grows downward into the app card
 //   (the keys stay on top, the icon and name fade in below);
@@ -325,17 +325,20 @@ final class CapsOverlayView: NSVisualEffectView {
 // material's flat dark tint until the next redraw. So it appears and disappears at
 // once, like Spotlight, and only its contents animate.
 final class CapsOverlay {
-    // The app path last requested by the key handler. `app` is set synchronously in the
+    // The path last requested by the key handler. `app` is set synchronously in the
     // tap callback, so each key press compares against it without waiting for the UI.
     var target: String? { app?.path }
 
-    private enum Mode { case hidden, keys, app, confirming }
-    private var mode: Mode = .hidden
-    private var app: AppShortcut?
+    // What the window shows; nil while it is hidden.
+    private var mode: CapsOverlayView.Stage?
+    // The app, folder or website releasing Caps would open, and the keys pressed so far.
+    private var app: ShortcutTarget?
+    private var keys: String?
     private var shownPath: String?
-    private var pillKeys: String?
-    private var cardKeys = ""
     private var hideImmediately = false
+    // The card stays on screen after Caps is released (holdCard) until releaseCard or
+    // the confirmation takes it over.
+    private var holding = false
     private var renderScheduled = false
     // Bumped by each hide, so only the latest pending hide orders the window out.
     private var hideGeneration = 0
@@ -358,34 +361,48 @@ final class CapsOverlay {
         panel.contentView = content
     }
 
-    // The app releasing Caps would open, or nil.
-    func setApp(_ binding: AppShortcut?) {
-        app = binding
+    // The app, folder or website releasing Caps would open, or nil.
+    func setApp(_ target: ShortcutTarget?) {
+        app = target
         setNeedsRender()
     }
-    // The keys pressed, with no app matching: the small HUD with "No matching app".
+    // The keys pressed: on top of the app card when they select something, otherwise
+    // the small HUD with "No matching app".
     func showKeys(_ keys: String) {
-        pillKeys = keys
-        setNeedsRender()
-    }
-    // The keys pressed, shown on top of the app card.
-    func showAppKeys(_ keys: String) {
-        cardKeys = keys
-        pillKeys = nil
+        guard keys != self.keys else { return }
+        self.keys = keys
         setNeedsRender()
     }
     // No keys to show. `immediately` hides it within this key event (the Folders panel takes over).
     func hideKeys(immediately: Bool = false) {
-        pillKeys = nil
         if immediately { hideImmediately = true }
+        guard keys != nil || immediately else { return }
+        keys = nil
         setNeedsRender()
     }
     // Everything off at once (the key tap is going away).
     func reset() {
         guard mode != .confirming else { return }
         app = nil
-        pillKeys = nil
+        keys = nil
+        holding = false
         hideNow()
+    }
+    // Keeps the card on screen past the Caps release that would hide it, while a
+    // website's open tabs are looked up: confirm() then continues the same card, or
+    // releaseCard() hides it once the tab is in front. Call it from the work queued
+    // for that key event, before the hide runs.
+    func holdCard() {
+        guard panel.isVisible, content.stage == .app else { return }
+        // A pending hide checks the generation and leaves the window alone.
+        hideGeneration += 1
+        holding = true
+    }
+    func releaseCard() {
+        guard holding else { return }
+        holding = false
+        // Unless a new Caps hold has shown something in the meantime.
+        if mode == nil { hideNow() }
     }
 
     private func setNeedsRender() {
@@ -401,23 +418,22 @@ final class CapsOverlay {
     private func render() {
         // The confirmation owns the window until it ends.
         guard mode != .confirming else { return }
-        let desired: Mode = app != nil ? .app : pillKeys != nil ? .keys : .hidden
         let immediate = hideImmediately
         hideImmediately = false
-        if desired == .hidden {
-            guard mode != .hidden else { return }
+        let wanted: CapsOverlayView.Stage? = app != nil ? .app : (keys != nil ? .keys : nil)
+        guard let stage = wanted else {
+            guard mode != nil else { return }
             if immediate { hideNow() } else { hideAfterKeyEvent() }
             return
         }
         if let app = app, app.path != shownPath {
             shownPath = app.path
-            content.icon = NSWorkspace.shared.icon(forFile: app.path)
+            content.icon = app.icon
             content.name = app.name
         }
-        content.setKeys(desired == .app ? cardKeys : pillKeys ?? "")
-        let stage: CapsOverlayView.Stage = desired == .app ? .app : .keys
-        let frame = desired == .app ? CapsHUDGeometry.cardFrame() : CapsHUDGeometry.unmatchedFrame()
-        if mode == .hidden || !panel.isVisible {
+        content.setKeys(keys ?? "")
+        let frame = stage == .app ? CapsHUDGeometry.cardFrame() : CapsHUDGeometry.unmatchedFrame()
+        if mode == nil || !panel.isVisible {
             // Appears at once, already at its size.
             content.setStage(stage, animated: false)
             setFrame(frame, animated: false)
@@ -425,14 +441,14 @@ final class CapsOverlay {
                 panel.orderFrontRegardless()
                 redrawBackdrop()
             }
-        } else if mode != desired {
+        } else if mode != stage {
             // Keys ⇄ app card: the same window grows or shrinks.
             content.setStage(stage, animated: true)
             setFrame(frame, animated: true)
         } else {
             content.setStage(stage, animated: true)
         }
-        mode = desired
+        mode = stage
     }
 
     private func setFrame(_ frame: NSRect, animated: Bool) {
@@ -463,17 +479,17 @@ final class CapsOverlay {
     // app that is not running starts the confirmation from that same event, and it
     // takes over the card still on screen instead of the window blinking out and in.
     private func hideAfterKeyEvent() {
-        mode = .hidden
+        mode = nil
         hideGeneration += 1
         let generation = hideGeneration
         DispatchQueue.main.async { [weak self] in
             // Shown again (or taken over by the confirmation) in the meantime: it stays.
-            guard let self = self, self.mode == .hidden, self.hideGeneration == generation else { return }
+            guard let self = self, self.mode == nil, self.hideGeneration == generation else { return }
             self.panel.orderOut(nil)
         }
     }
     private func hideNow() {
-        mode = .hidden
+        mode = nil
         hideGeneration += 1
         panel.orderOut(nil)
     }
@@ -486,6 +502,7 @@ final class CapsOverlay {
         let panel = self.panel
         // The card is still on screen from the Caps release: take it over where it is.
         let continuesCard = panel.isVisible && content.stage == .app
+        holding = false
         hideGeneration += 1
         mode = .confirming
         content.icon = icon
@@ -520,7 +537,7 @@ final class CapsOverlay {
         hideNow()
         // Whatever the key handler asked for during the confirmation is stale now.
         app = nil
-        pillKeys = nil
+        keys = nil
         if !confirmed, !panel.dismissedByOutsideClick {
             previousFocus.restore()
         }

@@ -11,4 +11,5 @@
 <key>LSMinimumSystemVersion</key><string>12.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>Clutch switches to a website’s tab when it is already open in your browser, instead of opening it again.</string>
 </dict></plist>

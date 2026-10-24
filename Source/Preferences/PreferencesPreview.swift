@@ -11,6 +11,7 @@ private struct PreferencesCanvas: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let controller = context.coordinator
         try? controller.loadBindings()
+        try? controller.loadWebsites()
         controller.selectedPage = page
         return controller.makePreferencesContent()
     }
@@ -73,7 +74,8 @@ struct PreferencesPreviews: PreviewProvider {
             PreferencesWindowPreview(page: 0).previewDisplayName("General")
             PreferencesWindowPreview(page: 1).previewDisplayName("App List")
             PreferencesWindowPreview(page: 2).previewDisplayName("Folders")
-            PreferencesWindowPreview(page: 3).previewDisplayName("Windows")
+            PreferencesWindowPreview(page: 3).previewDisplayName("Websites")
+            PreferencesWindowPreview(page: 4).previewDisplayName("Windows")
         }
         .frame(width: AppDelegate.preferenceSize.width, height: AppDelegate.preferenceSize.height + 106)
         .background(Color(nsColor: .windowBackgroundColor))

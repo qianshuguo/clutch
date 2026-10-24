@@ -65,7 +65,7 @@ expect(owner.handle(.keyDown, echoedEvent)?.takeUnretainedValue() === echoedEven
 expect(owner.state.held && !owner.state.chord, "replay cannot cancel a subsequent physical Caps gesture")
 owner.state.reset()
 print("PASS: Caps system-key replay encoding, matching release, event-tap bypass")
-owner.bindings = [AppShortcut(key: 3, name: "Example", path: "/Applications/Example.app", bundleID: nil)]
+owner.bindings = [AppShortcut(keys: [3], name: "Example", path: "/Applications/Example.app", bundleID: nil)]
 owner.folders = [FolderEntry(name: "First", path: "/tmp"), FolderEntry(name: "Second", path: "/")]
 let preferences = owner.makeFoldersContent(size: AppDelegate.preferenceSize, presentation: .preferences)
 let picker = owner.makeFoldersContent(size: AppDelegate.preferenceSize)
@@ -87,6 +87,92 @@ for (controller, expectedHint) in [(preferences.controller, false), (picker.cont
     expect(labels.contains("⇪1") == expectedHint, "only picker rows show Caps number hints")
     expect(controller.tableView(table, typeSelectStringFor: nil, row: 1) == "Second", "folder type selection uses display names")
 }
+// Preferences > Folders: App List's shortcut fields; the path shows when pointing at a folder.
+expect(preferencesTable.tableColumns.map { $0.title } == ["Name", "Shortcut"], "Folders preferences show shortcut fields, not paths")
+let pickerNameCell = picker.controller.tableView(pickerTable, viewFor: pickerTable.tableColumns[0], row: 0)!
+expect(pickerNameCell.toolTip == "/tmp", "the picker shows the path only when pointing at a folder")
+expect(!picker.controller.tableView(pickerTable, viewFor: pickerTable.tableColumns[1], row: 0)!.subviews
+        .contains { ($0 as? NSTextField)?.stringValue.contains("/") == true }, "picker rows show no path")
+let folderNameCell = preferences.controller.tableView(preferencesTable, viewFor: preferencesTable.tableColumns[0], row: 0)!
+expect(folderNameCell.toolTip == "/tmp", "pointing at a folder shows its path")
+func folderRecorder(_ row: Int) -> KeyRecorder {
+    preferences.controller.tableView(preferencesTable, viewFor: preferencesTable.tableColumns[1], row: row)!
+        .subviews.compactMap { $0 as? KeyRecorder }.first!
+}
+expect(folderRecorder(0).title == "Record Shortcut" && folderRecorder(0).maxKeys == 3, "folders record up to three keys")
+expect(owner.assignShortcut([2, 13], to: .folder(path: owner.folders[0].path), recorder: folderRecorder(0))
+       && owner.folders[0].keys == [2, 13], "a folder takes ⇪D W")
+expect(folderRecorder(0).title == "⇪D W", "the folder's field shows its shortcut")
+expect(owner.shortcutConflicts([2, 13], for: .folder(path: "/")).inUse == ["⇪D W already opens First."], "folder shortcuts conflict like app shortcuts")
+expect(owner.shortcutConflicts([2, 13], for: .app(path: "/Applications/Example.app")).owners == [.folder(path: "/tmp")],
+       "an app and a folder cannot share a shortcut")
+expect(owner.shortcutConflicts([2, 13], for: .folder(path: "/tmp")).owners.isEmpty
+       && owner.shortcutConflicts([2], for: .folder(path: "/")).owners.isEmpty, "only the exact keys conflict")
+expect(owner.folders[0].extends([2]) && !owner.folders[0].extends([2, 13]) && owner.folders[0].matches([2, 13]),
+       "⇪D starts ⇪D W")
+expect(owner.shortcutConflicts([2], for: .window(.center)).owners == [.folder(path: "/tmp")],
+       "a window action on D would take the folder's shortcut")
+folderRecorder(0).onClear?()
+expect(owner.folders[0].keys.isEmpty && folderRecorder(0).title == "Record Shortcut", "✕ clears a folder shortcut")
+// Edit… changes only the name Clutch shows, never the folder.
+func folderNames(_ row: Int) -> [String] {
+    preferences.controller.tableView(preferencesTable, viewFor: preferencesTable.tableColumns[0], row: row)!
+        .subviews.compactMap { ($0 as? NSTextField)?.stringValue }
+}
+expect(owner.folders[0].originalName == FileManager.default.displayName(atPath: "/tmp") && owner.folders[0].isRenamed,
+       "a folder knows its own name, and that First is a new one")
+owner.updateFolder(path: "/tmp", name: "  Scratch ")
+expect(owner.folders[0].name == "Scratch" && folderNames(0) == ["Scratch"], "Edit renames a folder in the list")
+owner.updateFolder(path: "/tmp", name: "")
+expect(owner.folders[0].name == owner.folders[0].originalName && !owner.folders[0].isRenamed,
+       "an empty name goes back to the folder's own name")
+// While Name is empty, its gray placeholder is the name of the folder Location names.
+let namePlaceholder = AppDelegate.folderFields(name: "", location: "")[0].placeholder
+expect(namePlaceholder?(["", "/tmp/"]) == FileManager.default.displayName(atPath: "/tmp")
+       && namePlaceholder?(["", ""]) == "" && namePlaceholder?(["", "/no/such/folder"]) == "",
+       "an empty name shows the folder's own name in gray")
+expect(AppDelegate.folderFields(name: "", location: "")[1].placeholder == nil, "Location has no placeholder")
+// Edit… can also move an entry to another folder; the shortcut stays, and a folder still
+// showing its own name takes the new one's.
+let movedFolder = FileManager.default.temporaryDirectory.appendingPathComponent("ClutchMovedFolder").standardizedFileURL.path
+try? FileManager.default.createDirectory(atPath: movedFolder, withIntermediateDirectories: true)
+owner.folders[0].keys = [2]
+owner.updateFolder(path: "/tmp", name: owner.folders[0].name, location: "  \(movedFolder)/ ")
+expect(owner.folders[0].path == movedFolder && owner.folders[0].name == "ClutchMovedFolder" && owner.folders[0].keys == [2],
+       "Edit changes a folder's location and keeps its shortcut")
+owner.updateFolder(path: movedFolder, name: "Moved", location: "/tmp")
+expect(owner.folders[0].path == URL(fileURLWithPath: "/tmp").standardizedFileURL.path && owner.folders[0].name == "Moved",
+       "a renamed folder keeps its name when it moves")
+owner.folders[0].path = "/tmp"; owner.folders[0].keys = []
+try? FileManager.default.removeItem(atPath: movedFolder)
+// + uses the same Name and Location sheet; a folder already listed is selected instead.
+expect(AppDelegate.folderFields(name: "", location: "").map { $0.label } == ["Name", "Location"]
+       && AppDelegate.folderFields(name: "", location: "")[1].choosesFolder, "Add and Edit Folder share Name and Location, with Choose…")
+let addedFolder = FileManager.default.temporaryDirectory.appendingPathComponent("ClutchAddedFolder").standardizedFileURL.path
+try? FileManager.default.createDirectory(atPath: addedFolder, withIntermediateDirectories: true)
+owner.addFolder(name: "", location: "/tmp/", to: preferences.controller)
+expect(owner.folders.count == 2 && preferencesTable.selectedRowIndexes == IndexSet(integer: 0), "adding a folder already listed selects it")
+owner.addFolder(name: "", location: addedFolder, to: preferences.controller)
+expect(owner.folders.count == 3 && owner.folders[2].name == "ClutchAddedFolder"
+       && preferencesTable.selectedRowIndexes == IndexSet(integer: 2), "an added folder without a name uses its own")
+owner.folders.removeLast()
+owner.addFolder(name: " Added ", location: addedFolder, to: preferences.controller)
+expect(owner.folders.last?.name == "Added" && owner.folders.last?.path == addedFolder, "a folder can be added with a name")
+owner.folders.removeLast(); owner.saveFolders()
+try? FileManager.default.removeItem(atPath: addedFolder)
+expect(!pickerTable.focusesOnRightClick && preferencesTable.focusesOnRightClick,
+       "a right-click in the picker leaves focus in its search field")
+owner.folders[0].name = "First"; owner.folders[1].name = "Second"
+preferencesTable.reloadData(); pickerTable.reloadData()
+let oldFolders = try! JSONDecoder().decode([FolderEntry].self, from: Data(#"[{"name":"Old","path":"/old"}]"#.utf8))
+expect(oldFolders[0].keys.isEmpty, "a folder saved without a shortcut loads")
+let savedFolder = FolderEntry(name: "Saved", path: "/saved", keys: [2, 13])
+let savedFolderJSON = String(decoding: try! JSONEncoder().encode([savedFolder, oldFolders[0]]), as: UTF8.self)
+expect(savedFolderJSON.contains(#""shortcut":[2,13]"#) && savedFolderJSON.components(separatedBy: "shortcut").count == 2,
+       "folder shortcuts are saved under \"shortcut\", and left out when empty")
+expect(try! JSONDecoder().decode([FolderEntry].self, from: JSONEncoder().encode([savedFolder])) == [savedFolder],
+       "folder shortcuts round-trip")
+print("PASS: folder shortcut fields")
 // Folders search: the field filters the picker by name or path and selects the best match.
 let search = picker.controller
 let searchField = NSSearchField()
@@ -160,7 +246,7 @@ expect(FolderListController.ordered(chinese, query: "文件") == [1], "Chinese c
 print("PASS: Folders search ranks word starts, initials, then contains")
 
 let applications = ApplicationListController(owner: owner)
-owner.configureList(applications.table, width: AppDelegate.preferenceSize.width, columnID: "app")
+owner.configureList(applications.table, width: AppDelegate.preferenceSize.width, title: "Application")
 applications.table.reloadData()
 // Deliberately give the coordinator another table. Cell callbacks must use their origin.
 owner.applicationList = ApplicationListController(owner: owner)
@@ -169,18 +255,18 @@ let recorder = cell.subviews.compactMap { $0 as? KeyRecorder }.first!
 _ = owner.state.route(key: 79, down: true, repeated: false, bound: false)
 recorder.onStart?()
 expect(owner.state.held, "recording preserves standalone Caps")
-expect(owner.state.route(key: 79, down: false, repeated: false, bound: false, shortcutsEnabled: false).tap,
+expect(owner.state.route(key: 79, down: false, repeated: false, bound: false, input: .inactive).tap,
        "standalone Caps still replays after recording begins")
 expect(applications.table.selectedRow == 0, "recording selects the originating application table")
 expect(owner.applicationList?.table.selectedRow == -1, "recording does not select a different table")
-expect(recorder.title == "Caps + F", "assigned key label is preserved")
+expect(recorder.title == "⇪F", "assigned key label is preserved")
 let header = PlainListHeaderView(frame: NSRect(x: 0, y: 0, width: 460, height: 28))
 header.tableView = applications.table
 header.layout()
 expect(!cell.subviews.contains { $0 is NSTextField }, "the shortcut field includes Caps; there is no separate label")
 let detailColumn = applications.table.frameOfCell(atColumn: 1, row: 0)
-expect(abs(header.secondLabel.frame.minX - (detailColumn.minX + recorder.frame.minX)) < 0.01,
-       "shortcut header aligns with the actual row contents")
+expect(abs(header.secondLabel.frame.minX + ListGeometry.labelTextInset - (detailColumn.minX + recorder.frame.minX)) < 0.01,
+       "shortcut header text lines up with the left edge of the shortcut fields")
 for (content, controller) in [(preferences.content, preferences.controller), (picker.content, picker.controller)] {
     let scroll = content.subviews.compactMap { $0 as? ListScrollView }.first!
     let isPicker = controller.presentation == .picker
@@ -188,56 +274,112 @@ for (content, controller) in [(preferences.content, preferences.controller), (pi
     expect(content.subviews.contains { $0 is PlainListHeaderView } == !isPicker,
            "only preferences has a header")
 }
-expect(owner.assignShortcut(46, 46, to: owner.bindings[0], recorder: recorder) && owner.bindings[0].secondKey == 46, "Caps + M + M uses the same key twice")
-expect(!owner.assignShortcut(46, KeyCode.space, to: owner.bindings[0], recorder: recorder), "Space stays reserved as a second key")
-expect(owner.assignShortcut(46, 13, to: owner.bindings[0], recorder: recorder)
-       && owner.bindings[0].key == 46 && owner.bindings[0].secondKey == 13, "Caps + M + W is assigned without asking")
+expect(owner.assignShortcut([46, 46], to: .app(path: owner.bindings[0].path), recorder: recorder) && owner.bindings[0].keys == [46, 46], "Caps + M + M uses the same key twice")
+expect(!owner.assignShortcut([46, KeyCode.space], to: .app(path: owner.bindings[0].path), recorder: recorder), "Space stays reserved as a second key")
+expect(!owner.assignShortcut([46, 13, KeyCode.space], to: .app(path: owner.bindings[0].path), recorder: recorder), "Space stays reserved as a third key")
+expect(!owner.assignShortcut([46, KeyCode.delete], to: .app(path: owner.bindings[0].path), recorder: recorder), "Delete is reserved for editing a recording")
+expect(!owner.assignShortcut([46, KeyCode.returnKey], to: .app(path: owner.bindings[0].path), recorder: recorder), "Return is reserved for confirming")
+expect(!owner.assignShortcut([KeyCode.keypadEnter], to: .app(path: owner.bindings[0].path), recorder: recorder), "Enter is reserved for confirming")
+expect(!owner.assignShortcut([46, 13, 14, 7], to: .app(path: owner.bindings[0].path), recorder: recorder), "a shortcut has at most three keys")
+expect(owner.assignShortcut([46, 13], to: .app(path: owner.bindings[0].path), recorder: recorder)
+       && owner.bindings[0].keys == [46, 13], "Caps + M + W is assigned without asking")
 let comboCell = applications.tableView(applications.table, viewFor: applications.table.tableColumns[1], row: 0)!
-expect(comboCell.subviews.compactMap { $0 as? KeyRecorder }.first?.title == "Caps + M + W", "two-key shortcuts show both keys")
-expect(owner.assignShortcut(3, to: owner.bindings[0], recorder: recorder) && owner.bindings[0].secondKey == nil, "assigning one key clears the second key")
+expect(comboCell.subviews.compactMap { $0 as? KeyRecorder }.first?.title == "⇪M W", "two-key shortcuts show both keys")
+expect(owner.assignShortcut([46, 13, 14], to: .app(path: owner.bindings[0].path), recorder: recorder)
+       && owner.bindings[0].keys == [46, 13, 14], "Caps + M + W + E is assigned")
+let tripleCell = applications.tableView(applications.table, viewFor: applications.table.tableColumns[1], row: 0)!
+expect(tripleCell.subviews.compactMap { $0 as? KeyRecorder }.first?.title == "⇪M W E", "three-key shortcuts show all three keys")
+expect(owner.assignShortcut([46, 13], to: .app(path: owner.bindings[0].path), recorder: recorder) && owner.bindings[0].keys == [46, 13], "assigning two keys clears the third key")
+expect(owner.assignShortcut([3], to: .app(path: owner.bindings[0].path), recorder: recorder) && owner.bindings[0].keys == [3], "assigning one key clears the second key")
 // Recording as used: Caps held, T then H, Caps released.
 recorder.recording = true
-expect(recorder.prompt == (owner.tap == nil ? "Turn on Clutch" : "Hold Caps + 1 or 2 keys"), "the prompt depends on whether Clutch can see Caps")
+expect(recorder.prompt == (owner.tap == nil ? "Turn on Clutch" : "Hold ⇪ to start…"), "the prompt depends on whether Clutch can see Caps")
 recorder.capsAvailable = { true } // As if Clutch were enabled.
-expect(recorder.prompt == "Hold Caps + 1 or 2 keys", "App List asks for Caps + 1 or 2 keys")
+expect(recorder.prompt == "Hold ⇪ to start…", "the field asks to hold ⇪")
+expect(recorder.maxKeys == 3, "App List records up to three keys")
 recorder.capsPressed()
-expect(recorder.title == "Caps + …", "pressing Caps shows the field is listening")
+expect(recorder.title == "⇪…", "pressing Caps shows the field is listening")
 recorder.capsReleased()
 expect(recorder.recording, "releasing Caps alone records nothing")
 expect(recorder.title == recorder.prompt, "releasing Caps alone shows the prompt again")
 recorder.capsPressed()
 recorder.capsKeyPressed(17)
-expect(recorder.title == "Caps + T + …", "the first Caps key waits for an optional second key")
+expect(recorder.title == "⇪T…", "the first Caps key waits for more keys")
 recorder.capsKeyPressed(4)
-expect(recorder.title == "Caps + T + H", "the field shows both keys while Caps is held")
+expect(recorder.title == "⇪T H…", "the field shows both keys while Caps is held")
 recorder.capsReleased()
-expect(!recorder.recording && owner.bindings[0].key == 17 && owner.bindings[0].secondKey == 4, "releasing Caps saves Caps + T + H")
+expect(!recorder.recording && owner.bindings[0].keys == [17, 4], "releasing Caps saves Caps + T + H")
 recorder.recording = true
 recorder.capsKeyPressed(17)
 recorder.capsReleased()
-expect(owner.bindings[0].key == 17 && owner.bindings[0].secondKey == nil, "one key then Caps release saves a one-key shortcut")
+expect(owner.bindings[0].keys == [17], "one key then Caps release saves a one-key shortcut")
 recorder.recording = true
 recorder.capsKeyPressed(17)
 recorder.capsKeyPressed(17)
-expect(recorder.title == "Caps + T + T", "the same key can be recorded twice")
+expect(recorder.title == "⇪T T…", "the same key can be recorded twice")
 recorder.capsReleased()
-expect(owner.bindings[0].key == 17 && owner.bindings[0].secondKey == 17, "releasing Caps saves Caps + T + T")
+expect(owner.bindings[0].keys == [17, 17], "releasing Caps saves Caps + T + T")
+recorder.recording = true
+recorder.capsKeyPressed(17)
+recorder.capsKeyPressed(4)
+recorder.capsKeyPressed(14)
+expect(recorder.title == "⇪T H E", "the field shows all three keys")
+recorder.capsKeyPressed(7)
+expect(recorder.title == "⇪T H E", "a fourth key is not recorded")
+recorder.capsKeyPressed(KeyCode.delete)
+expect(recorder.title == "⇪T H…", "Caps + Delete removes the last key")
+recorder.capsKeyPressed(KeyCode.delete)
+recorder.capsKeyPressed(KeyCode.delete)
+expect(recorder.title == "⇪…", "Caps + Delete can remove every key")
+recorder.capsKeyPressed(17)
+recorder.capsKeyPressed(4)
+recorder.capsKeyPressed(14)
+recorder.capsReleased()
+expect(!recorder.recording && owner.bindings[0].keys == [17, 4, 14], "releasing Caps saves Caps + T + H + E")
+recorder.recording = true
+recorder.capsPressed()
+recorder.capsKeyPressed(KeyCode.returnKey)
+expect(recorder.recording && recorder.title == "⇪…", "Caps + Return with no keys records nothing")
+recorder.capsKeyPressed(17)
+recorder.capsKeyPressed(4)
+recorder.capsKeyPressed(KeyCode.returnKey)
+expect(!recorder.recording && owner.bindings[0].keys == [17, 4], "Caps + T + H + Return saves Caps + T + H at once")
+recorder.capsReleased()
+expect(owner.bindings[0].keys == [17, 4], "releasing Caps after Return changes nothing")
+let clearCell = applications.tableView(applications.table, viewFor: applications.table.tableColumns[1], row: 0)!
+let clearRecorder = clearCell.subviews.compactMap { $0 as? KeyRecorder }.first!
+expect(clearRecorder.hasShortcut && clearRecorder.onClear != nil, "a field with a shortcut offers ✕")
+clearRecorder.onClear?()
+expect(!owner.bindings[0].hasShortcut && owner.bindings[0].keys.isEmpty, "✕ clears the shortcut and keeps the app")
+let emptyRecorder = applications.tableView(applications.table, viewFor: applications.table.tableColumns[1], row: 0)!
+    .subviews.compactMap { $0 as? KeyRecorder }.first!
+expect(emptyRecorder.title == "Record Shortcut" && !emptyRecorder.hasShortcut, "an empty field says Record Shortcut")
 let legacy = try! JSONDecoder().decode([AppShortcut].self, from: Data(#"[{"key":3,"name":"Old","path":"/tmp/old"}]"#.utf8))
-expect(legacy[0].key == 3 && legacy[0].secondKey == nil, "lists saved before two-key shortcuts still load")
+expect(legacy[0].keys == [3], "a one-key shortcut saved without secondKey / thirdKey loads")
+let twoKeySave = try! JSONDecoder().decode([AppShortcut].self, from: Data(#"[{"key":46,"name":"Word","path":"/tmp/word","secondKey":13}]"#.utf8))
+expect(twoKeySave[0].keys == [46, 13], "lists saved with two-key shortcuts still load")
+expect(try! JSONDecoder().decode([AppShortcut].self, from: JSONEncoder().encode(twoKeySave)) == twoKeySave,
+       "app shortcuts round-trip in the saved format")
+let unassignedJSON = String(decoding: try! JSONEncoder().encode(AppShortcut(name: "None", path: "/none", bundleID: nil)), as: UTF8.self)
+expect(unassignedJSON.contains(#""key":65535"#) && !unassignedJSON.contains("secondKey"), "no shortcut is saved as the unassigned key")
+expect(try! JSONDecoder().decode(AppShortcut.self, from: Data(unassignedJSON.utf8)).keys.isEmpty, "the unassigned key loads as no shortcut")
 // Caps release decides, so Caps + M and Caps + M + W can belong to different apps.
-owner.bindings = [AppShortcut(key: 46, name: "Mail", path: "/mail", bundleID: nil),
-                  AppShortcut(key: 46, name: "Word", path: "/word", bundleID: nil, secondKey: 13),
-                  AppShortcut(key: 46, name: "Messages", path: "/messages", bundleID: nil, secondKey: 46)]
-let comboConflicts = owner.shortcutConflicts(46, 13, excluding: "/notes")
-expect(comboConflicts.indices == [1] && comboConflicts.inUse == ["Caps + M + W already opens Word."], "only the same shortcut conflicts")
-expect(owner.shortcutConflicts(46, nil, excluding: "/notes").indices == [0], "Caps + M alone conflicts only with Caps + M")
-expect(owner.shortcutConflicts(46, 7, excluding: "/notes").indices.isEmpty, "a new two-key shortcut can share its first key")
-expect(owner.shortcutConflicts(46, 13, excluding: "/word").indices.isEmpty, "an app never conflicts with itself")
-let windowConflicts = owner.firstKeyConflicts(46)
-expect(windowConflicts.indices == [0, 1, 2] && windowConflicts.inUse == ["Caps + M already opens Mail.", "Caps + M already starts Word (M + W) and Messages (M + M)."],
+owner.bindings = [AppShortcut(keys: [46], name: "Mail", path: "/mail", bundleID: nil),
+                  AppShortcut(keys: [46, 13], name: "Word", path: "/word", bundleID: nil),
+                  AppShortcut(keys: [46, 46], name: "Messages", path: "/messages", bundleID: nil)]
+let notes = ShortcutOwner.app(path: "/notes")
+let comboConflicts = owner.shortcutConflicts([46, 13], for: notes)
+expect(comboConflicts.owners == [.app(path: "/word")] && comboConflicts.inUse == ["⇪M W already opens Word."], "only the same shortcut conflicts")
+expect(owner.shortcutConflicts([46], for: notes).owners == [.app(path: "/mail")], "Caps + M alone conflicts only with Caps + M")
+expect(owner.shortcutConflicts([46, 7], for: notes).owners.isEmpty, "a new two-key shortcut can share its first key")
+expect(owner.shortcutConflicts([46, 13, 14], for: notes).owners.isEmpty, "a three-key shortcut can extend a two-key one")
+expect(owner.shortcutConflicts([46, 13], for: .app(path: "/word")).owners.isEmpty, "an app never conflicts with itself")
+let windowConflicts = owner.shortcutConflicts([46], for: .window(.center))
+expect(windowConflicts.owners == [.app(path: "/mail"), .app(path: "/word"), .app(path: "/messages")]
+       && windowConflicts.inUse == ["⇪M already opens Mail.", "⇪M already starts Word (⇪M W) and Messages (⇪M M)."],
        "a window action takes the key alone and every two-key shortcut starting with it")
 owner.bindings = []
-expect(recorder.onKeys?(0, nil) == false, "a removed binding cannot be assigned from a stale cell")
+expect(recorder.onKeys?([0]) == false, "a removed binding cannot be assigned from a stale cell")
 
 var invoked = 0
 let button = ListActionButton { invoked += 1 }
@@ -255,10 +397,10 @@ retainedTable?.openSelection?() // A callback from a detached view is harmless.
 // Exercise AppKit's actual tracking loop: a drag must keep the click selection,
 // while Shift/Command clicks still use the native selection rules.
 let trackingOwner = AppDelegate()
-trackingOwner.bindings = (0..<4).map { AppShortcut(key: 3, name: "Row \($0)", path: "/tmp/\($0)", bundleID: nil) }
+trackingOwner.bindings = (0..<4).map { AppShortcut(keys: [3], name: "Row \($0)", path: "/tmp/\($0)", bundleID: nil) }
 let trackingController = ApplicationListController(owner: trackingOwner)
 let trackingTable = trackingController.table
-trackingOwner.configureList(trackingTable, width: 460, columnID: "app")
+trackingOwner.configureList(trackingTable, width: 460, title: "Application")
 let trackingWindow = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 460, height: 200),
                               styleMask: [.borderless], backing: .buffered, defer: false)
 trackingWindow.isReleasedWhenClosed = false
@@ -309,7 +451,7 @@ let windowOwner = AppDelegate()
 windowOwner.bindings = []
 let windowList = WindowShortcutListController(owner: windowOwner)
 windowOwner.windowShortcutList = windowList
-windowOwner.configureList(windowList.table, width: AppDelegate.preferenceSize.width, columnID: "window")
+windowOwner.configureList(windowList.table, width: AppDelegate.preferenceSize.width, title: "Action")
 windowList.table.reloadData()
 expect(windowList.table.numberOfRows == WindowCommand.allCases.count && windowList.table.tableColumns.map { $0.title } == ["Action", "Shortcut"],
        "window list has one row per action under Action / Shortcut")
@@ -318,16 +460,21 @@ func windowRecorder(_ row: Int) -> KeyRecorder? {
         .subviews.compactMap { $0 as? KeyRecorder }.first
 }
 let centerRow = WindowCommand.allCases.firstIndex(of: .center)!
-expect(windowRecorder(centerRow)?.title == shortcutTitle(windowOwner.windowShortcuts.key(for: .center), nil), "shortcut field shows the current key")
+expect(windowRecorder(centerRow)?.title == shortcutTitle(windowOwner.windowShortcuts.key(for: .center).map { [$0] } ?? []), "shortcut field shows the current key")
 let savedWindowKeys = UserDefaults.standard.data(forKey: DefaultsKey.windowShortcuts)
 windowOwner.windowShortcuts = .defaults
 if let recorder = windowRecorder(centerRow) {
-    expect(windowOwner.assignWindowShortcut(40, to: .center, recorder: recorder), "a free key is assigned without asking")
-    expect(!windowOwner.assignWindowShortcut(KeyCode.space, to: .center, recorder: recorder), "Space stays reserved for Folders")
+    expect(windowOwner.assignShortcut([40], to: .window(.center), recorder: recorder), "a free key is assigned without asking")
+    expect(!windowOwner.assignShortcut([KeyCode.space], to: .window(.center), recorder: recorder), "Space stays reserved for Folders")
+    expect(!windowOwner.assignShortcut([40, 13], to: .window(.center), recorder: recorder), "a window action takes one key")
 }
-expect(windowOwner.windowShortcuts.key(for: .center) == 40 && windowRecorder(centerRow)?.title == "Caps + K", "assignment updates the list")
+expect(windowOwner.windowShortcuts.key(for: .center) == 40 && windowRecorder(centerRow)?.title == "⇪K", "assignment updates the list")
+expect(windowRecorder(centerRow)?.maxKeys == 1, "window actions record one key")
+windowRecorder(centerRow)?.onClear?()
+expect(windowOwner.windowShortcuts.key(for: .center) == nil && windowRecorder(centerRow)?.title == "Record Shortcut",
+       "✕ clears a window shortcut")
 windowOwner.restoreDefaultWindowShortcuts()
-expect(windowOwner.windowShortcuts == .defaults && windowRecorder(centerRow)?.title == "Caps + /", "Restore Defaults brings back Caps + /")
+expect(windowOwner.windowShortcuts == .defaults && windowRecorder(centerRow)?.title == "⇪/", "Restore Defaults brings back ⇪/")
 if let data = savedWindowKeys { UserDefaults.standard.set(data, forKey: DefaultsKey.windowShortcuts) }
 else { UserDefaults.standard.removeObject(forKey: DefaultsKey.windowShortcuts) }
 print("PASS: window shortcut list")
@@ -335,13 +482,13 @@ print("PASS: window shortcut list")
 // App List search matches application names only.
 let savedShortcuts = UserDefaults.standard.data(forKey: DefaultsKey.shortcuts)
 let searchOwner = AppDelegate()
-searchOwner.bindings = [AppShortcut(key: 46, name: "Messages", path: "/messages", bundleID: nil),
-                        AppShortcut(key: 46, name: "Microsoft Word", path: "/word", bundleID: nil, secondKey: 13),
-                        AppShortcut(key: 13, name: "WeChat", path: "/wechat", bundleID: nil),
-                        AppShortcut(key: unassignedKey, name: "Stickies", path: "/stickies", bundleID: nil)]
+searchOwner.bindings = [AppShortcut(keys: [46], name: "Messages", path: "/messages", bundleID: nil),
+                        AppShortcut(keys: [46, 13], name: "Microsoft Word", path: "/word", bundleID: nil),
+                        AppShortcut(keys: [13], name: "WeChat", path: "/wechat", bundleID: nil),
+                        AppShortcut(name: "Stickies", path: "/stickies", bundleID: nil)]
 let searchList = ApplicationListController(owner: searchOwner)
 searchOwner.applicationList = searchList
-searchOwner.configureList(searchList.table, width: AppDelegate.preferenceSize.width, columnID: "app")
+searchOwner.configureList(searchList.table, width: AppDelegate.preferenceSize.width, title: "Application")
 searchList.reload()
 func shownNames() -> [String] { searchList.visibleIndices.map { searchOwner.bindings[$0].name } }
 expect(shownNames().count == 4 && searchList.table.numberOfRows == 4, "an empty search shows every application")
@@ -383,3 +530,77 @@ expect(searchList.filter.isEmpty && searchList.table.selectedRowIndexes == Index
 if let data = savedShortcuts { UserDefaults.standard.set(data, forKey: DefaultsKey.shortcuts) }
 else { UserDefaults.standard.removeObject(forKey: DefaultsKey.shortcuts) }
 print("PASS: App List search, type selection, filtered removal")
+// Websites share the App List and Folders keys, and show in the HUD like them.
+let savedWebsites = UserDefaults.standard.data(forKey: DefaultsKey.websites)
+let siteOwner = AppDelegate()
+siteOwner.bindings = [AppShortcut(keys: [46], name: "Mail", path: "/mail", bundleID: nil)]
+siteOwner.folders = []
+siteOwner.websites = [WebsiteEntry(url: "https://github.com"), WebsiteEntry(url: "https://github.com/qianshuguo/clutch")]
+let siteList = WebsiteListController(owner: siteOwner)
+siteOwner.websiteList = siteList
+siteOwner.configureList(siteList.table, width: AppDelegate.preferenceSize.width, title: "Website",
+                        nameWidth: AppDelegate.websiteNameColumnWidth)
+siteList.reload()
+expect(siteList.table.numberOfRows == 2, "the Websites page lists every website")
+let siteNameCell = siteList.tableView(siteList.table, viewFor: siteList.table.tableColumns[0], row: 1)!
+expect(siteNameCell.subviews.compactMap { ($0 as? NSTextField)?.stringValue } == ["github.com/qianshuguo/clutch"]
+       && siteNameCell.toolTip == "https://github.com/qianshuguo/clutch\nIncluding subdomains", "a website row shows what it matches, and its address on hover")
+siteOwner.websites[1].title = "Clutch"
+siteList.reload()
+let namedSiteCell = siteList.tableView(siteList.table, viewFor: siteList.table.tableColumns[0], row: 1)!
+expect(namedSiteCell.subviews.compactMap { ($0 as? NSTextField)?.stringValue } == ["Clutch"]
+       && namedSiteCell.toolTip == "https://github.com/qianshuguo/clutch\nIncluding subdomains",
+       "a named website row shows only its name, and its address on hover")
+expect(siteList.table.tableColumns[1].width >= CGFloat(ListGeometry.shortcutRecorderWidth),
+       "the wider Websites name column still fits the shortcut field")
+expect(siteList.tableView(siteList.table, typeSelectStringFor: siteList.table.tableColumns[0], row: 1) == "Clutch",
+       "typing jumps to a website by its name")
+siteOwner.websites[1].title = ""
+siteList.reload()
+let siteRecorder = siteList.tableView(siteList.table, viewFor: siteList.table.tableColumns[1], row: 0)!
+    .subviews.compactMap { $0 as? KeyRecorder }.first!
+expect(siteRecorder.maxKeys == 3, "websites record up to three keys")
+expect(siteOwner.assignShortcut([5], to: .website(url: "https://github.com"), recorder: siteRecorder)
+       && siteOwner.websites[0].keys == [5], "a website takes ⇪G")
+if case .website(let site)? = siteOwner.shortcutTarget(for: [5]) {
+    expect(site.url == "https://github.com", "⇪G opens the website")
+} else { expect(false, "⇪G opens the website") }
+expect(siteOwner.shortcutTarget(for: [5])?.path == "https://github.com", "the HUD tracks a website by its address")
+expect(siteOwner.shortcutConflicts([5], for: .app(path: "/mail")).owners == [.website(url: "https://github.com")],
+       "an app and a website cannot share a shortcut")
+expect(siteOwner.shortcutConflicts([46], for: .website(url: "https://github.com")).inUse == ["⇪M already opens Mail."],
+       "a website asks before taking an app's shortcut")
+siteOwner.addWebsite(address: "www.github.com/")
+expect(siteOwner.websites.count == 2 && siteList.table.selectedRowIndexes == IndexSet(integer: 0),
+       "adding a website already listed selects it")
+siteOwner.addWebsite(address: "news.ycombinator.com")
+expect(siteOwner.websites.last?.url == "https://news.ycombinator.com" && siteList.table.selectedRowIndexes == IndexSet(integer: 2),
+       "a new website is added and selected")
+siteOwner.addWebsite(address: "example.com", name: "  Example  ")
+expect(siteOwner.websites.last?.title == "Example" && siteOwner.websites.last?.name == "Example",
+       "a website can be added with a name, like a bookmark")
+expect(siteOwner.websites.last?.includesSubdomains == true, "a new website includes subdomains unless turned off")
+siteOwner.updateWebsite(at: 3, name: "Example Docs", address: "example.com/docs/")
+expect(siteOwner.websites[3].url == "https://example.com/docs" && siteOwner.websites[3].title == "Example Docs"
+       && siteList.table.selectedRowIndexes == IndexSet(integer: 3), "editing changes a website's name and address")
+siteOwner.websites[3].keys = [14]
+siteOwner.updateWebsite(at: 3, name: "", address: "example.com/docs")
+expect(siteOwner.websites[3].keys == [14] && siteOwner.websites[3].name == "example.com/docs",
+       "editing keeps the shortcut, and clearing the name shows the address")
+siteOwner.updateWebsite(at: 3, name: "", address: "example.com/docs", includesSubdomains: false)
+expect(!siteOwner.websites[3].includesSubdomains, "editing can turn Include subdomains off")
+siteOwner.updateWebsite(at: 3, name: "", address: "example.com/docs")
+expect(!siteOwner.websites[3].includesSubdomains, "editing without the checkbox keeps it as it was")
+expect(AppDelegate.editableAddress("https://github.com/x") == "github.com/x"
+       && AppDelegate.editableAddress("http://localhost:3000") == "http://localhost:3000",
+       "the Edit sheet shows the address as typed")
+siteOwner.websites.removeLast()
+siteList.table.selectRowIndexes(IndexSet([0, 2]), byExtendingSelection: false)
+siteOwner.removeWebsites()
+expect(siteOwner.websites.map { $0.name } == ["github.com/qianshuguo/clutch"] && siteList.table.selectedRowIndexes == IndexSet(integer: 0),
+       "removing selected websites selects the nearest remaining row")
+expect(AppDelegate.preferenceTabs.map { $0.id } == ["general", "apps", "folders", "websites", "windows"],
+       "Websites is its own Preferences page, before Windows")
+if let data = savedWebsites { UserDefaults.standard.set(data, forKey: DefaultsKey.websites) }
+else { UserDefaults.standard.removeObject(forKey: DefaultsKey.websites) }
+print("PASS: Websites list, names, shared shortcuts, adding, editing and removing")

@@ -1,11 +1,12 @@
 import Cocoa
 
 // Shared application state. Feature behavior is implemented in the extensions
-// under App, Keyboard, Applications, Folders, Preferences, and Shared.
+// under App, Keyboard, Applications, Folders, Websites, Preferences, and Shared.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static let preferenceTabs = [(id: "general", title: "General", symbol: "gearshape"),
                                  (id: "apps", title: "App List", symbol: "list.bullet.rectangle"),
                                  (id: "folders", title: "Folders", symbol: "folder"),
+                                 (id: "websites", title: "Websites", symbol: "globe"),
                                  (id: "windows", title: "Windows", symbol: "macwindow")]
     // Exactly fits the Windows list without scrolling: its rows plus the list chrome
     // from makeListScroll (33 bottom bar, 28 header, 6 + 6 spacing). 7 rows → 311.
@@ -23,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var accessibilityNoticeRow: NSView?
     var pages: [NSView] = []
     var selectedPage = 0
-    let reopenNotification = Notification.Name("local.maxvoid.HyperKey.showPreferences")
+    let reopenNotification = Notification.Name("local.maxvoid.Clutch.showPreferences")
     var tap: CFMachPort?
     var runLoopSource: CFRunLoopSource?
     var permissionTimer: Timer?
@@ -41,8 +42,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let windowPreviewOverlay = WindowPreviewOverlay()
     // The one Caps HUD window: keys pressed, app card, and launch confirmation.
     let capsOverlay = CapsOverlay()
-    // Whether the key handler last asked the Caps HUD to show keys.
-    var capsHUDActive = false
     var windowPreview: WindowPreviewSession?
     var windowShortcuts = WindowShortcuts.load()
     var windowShortcutList: WindowShortcutListController?
@@ -54,5 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var folderTable: NSTableView? { folderList?.table }
     var preferencesFolderTable: NSTableView? { preferencesFolderList?.table }
     var folders: [FolderEntry] = []
-    let folderDragType = NSPasteboard.PasteboardType("local.maxvoid.HyperKey.folder")
+    let folderDragType = NSPasteboard.PasteboardType("local.maxvoid.Clutch.folder")
+    var websites: [WebsiteEntry] = []
+    var websiteList: WebsiteListController?
+    let browserTabs = BrowserTabs()
+    // Browsers already reported as refusing Automation, so the alert shows once per launch.
+    var automationDeniedBrowsers = Set<String>()
 }
