@@ -79,7 +79,7 @@ expect(state.pressedKeys.isEmpty && !state.showsKeyHint, "releasing Caps clears 
 state.reset()
 capsDown(at: 800)
 _ = state.route(key: KeyCode.space, down: true, repeated: false, bound: false)
-expect(!state.showsKeyHint, "Caps + Space (Folders) shows no key hint")
+expect(state.showsKeyHint && state.launchCandidate == nil, "Caps + Space shows like any unassigned key")
 state.reset()
 // Escape while Caps is held ends the gesture: nothing runs, nothing more is shown.
 capsDown(at: 900)
@@ -308,7 +308,7 @@ _ = comboRoute(13, prefix: true)
 _ = comboRoute(14, bound: true)
 _ = comboRoute(7, bound: true)
 _ = comboRoute(KeyCode.delete)
-expect(state.launchCandidate == [46, 13], "Delete after an ignored fourth key takes back the third")
+expect(state.pendingKeys == [46, 13] && state.pressedKeys == [46, 13], "Delete after an ignored fourth key takes back the third")
 state.reset()
 // Return while Caps is held confirms: it runs the shortcut now and ends the hold.
 capsDown()
@@ -365,6 +365,7 @@ expect(releaseCaps().launchKeys == [46, 13], "after Delete the shortcut can be f
 state.reset()
 capsDown()
 _ = comboRoute(KeyCode.delete)
+_ = comboRoute(KeyCode.delete, down: false)
 _ = comboRoute(46, bound: true, prefix: true)
 expect(state.launchCandidate == [46], "Delete with no keys yet does nothing")
 _ = comboRoute(KeyCode.delete)
@@ -376,6 +377,25 @@ capsDown()
 _ = state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true)
 _ = comboRoute(KeyCode.delete)
 expect(!state.windowPreviewActive && releaseCaps().window == nil, "in a window gesture Delete cancels the preview")
+state.reset()
+// Delete bound to a window action (Restore by default) runs it as the first key,
+// and still takes back keys once an app shortcut has started.
+capsDown()
+let deleteFirst = state.route(key: KeyCode.delete, down: true, repeated: false, bound: false, windowKey: true)
+expect(deleteFirst.windowPreview == KeyCode.delete && releaseCaps().window == KeyCode.delete, "Caps + Delete restores")
+state.reset()
+capsDown()
+_ = comboRoute(46, bound: true, prefix: true)
+_ = comboRoute(13, bound: true)
+let deleteLater = state.route(key: KeyCode.delete, down: true, repeated: false, bound: false, windowKey: true)
+expect(deleteLater.windowPreview == nil && state.launchCandidate == [46], "after app keys Delete still takes one back")
+expect(releaseCaps().launchKeys == [46], "and the shorter shortcut runs")
+state.reset()
+capsDown()
+_ = state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true)
+expect(state.route(key: KeyCode.delete, down: true, repeated: false, bound: false, windowKey: true).windowPreview == KeyCode.delete,
+       "in a window gesture a bound Delete previews Restore")
+_ = releaseCaps()
 state.reset()
 print("PASS: Delete takes back keys while Caps is held")
 // An unbound prefix must never be discarded (Caps A C is not Caps C).
@@ -428,12 +448,12 @@ for modifier in ["Control", "Option"] {
     state.reset()
     _ = state.route(key: 79, down: true, repeated: false, bound: false, otherModifier: true)
     let modifierFirst = releaseCaps()
-    expect(!modifierFirst.tap && !modifierFirst.showFolders, "\(modifier) then Caps has no action")
+    expect(!modifierFirst.tap, "\(modifier) then Caps has no action")
     capsDown()
     state.modifierChanged(otherModifier: true)
     state.modifierChanged(otherModifier: false)
     let capsFirst = releaseCaps()
-    expect(!capsFirst.tap && !capsFirst.showFolders, "Caps then \(modifier), released first, has no action")
+    expect(!capsFirst.tap, "Caps then \(modifier), released first, has no action")
     _ = state.route(key: 79, down: true, repeated: false, bound: false, otherModifier: true)
     let extra = state.route(key: 3, down: true, repeated: false, bound: true, otherModifier: true)
     expect(extra.swallow && extra.launchKeys == nil, "\(modifier) Caps with extra key is consumed")
@@ -443,40 +463,34 @@ print("PASS: Control/Option Caps have no action, both press/release orders, extr
 
 state.reset()
 expect(!state.route(key: 49, down: true, repeated: false, bound: false).swallow, "Space without Caps types normally")
-for capsReleasedFirst in [false, true] {
-    state.reset()
-    capsDown()
-    let opening = state.route(key: 49, down: true, repeated: false, bound: true)
-    expect(opening.swallow && opening.showFolders && opening.launchKeys == nil, "Caps Space opens Folders")
-    let spaceRepeat = state.route(key: 49, down: true, repeated: true, bound: false, input: .folderPicker, folderCount: 9)
-    expect(spaceRepeat.swallow && !spaceRepeat.showFolders, "Space repeats are consumed and never reopen")
-    expect(!state.route(key: 79, down: true, repeated: true, bound: false).showFolders, "Caps repeats never reopen")
-    if !capsReleasedFirst {
-        expect(state.route(key: 49, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).swallow, "Space release is consumed")
-    }
-    let release = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
-    expect(!release.tap && !release.openFolderSelection && !release.showFolders, "release without navigation leaves panel open")
-    if capsReleasedFirst {
-        expect(state.route(key: 49, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).swallow, "Space release after Caps is consumed")
-    }
-}
+// Caps + Space has no action: Space is consumed like any unassigned key.
 state.reset()
 capsDown()
-let heldSpace = state.route(key: 49, down: true, repeated: true, bound: false)
-expect(!heldSpace.showFolders && heldSpace.swallow, "Space already held before Caps does not open Folders")
+let capsSpace = state.route(key: 49, down: true, repeated: false, bound: false)
+expect(capsSpace.swallow && capsSpace.launchKeys == nil, "Caps Space is consumed")
+expect(state.route(key: 49, down: true, repeated: true, bound: false).swallow, "Space repeats are consumed")
+expect(state.route(key: 49, down: false, repeated: false, bound: false).swallow, "Space release is consumed")
+let afterSpace = releaseCaps()
+expect(!afterSpace.tap && afterSpace.launchKeys == nil, "Caps Space runs nothing and does not switch input")
 state.reset()
 capsDown()
-expect(!state.modifierChanged(otherModifier: false, commandModifier: true).showFolders, "Caps Command no longer opens Folders")
-expect(!releaseCaps().tap, "Caps Command is still a chord")
+_ = state.route(key: 3, down: true, repeated: false, bound: true)
+_ = state.route(key: 49, down: true, repeated: false, bound: false)
+expect(state.launchCandidate == nil && releaseCaps().launchKeys == nil, "Space after an app key cancels the shortcut")
 state.reset()
-expect(!state.route(key: 79, down: true, repeated: false, bound: false, commandModifier: true).showFolders, "Command Caps no longer opens Folders")
-expect(!state.route(key: 49, down: true, repeated: false, bound: false, commandModifier: true).showFolders, "Command blocks Caps Space")
+capsDown()
+_ = state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true)
+_ = state.route(key: 49, down: true, repeated: false, bound: false)
+expect(!state.windowPreviewActive && releaseCaps().window == nil, "Space after a window key drops the preview")
 state.reset()
+capsDown()
+state.modifierChanged(otherModifier: false, commandModifier: true)
+expect(!releaseCaps().tap, "Caps Command is a chord")
 for key in [UInt16(36), 76] {
     state.reset()
     capsDown()
     let enter = state.route(key: key, down: true, repeated: false, bound: false)
-    expect(!enter.showFolders && enter.swallow, "unassigned Caps Enter is consumed")
+    expect(enter.swallow && enter.launchKeys == nil, "unassigned Caps Enter is consumed")
     expect(!releaseCaps().tap, "Caps Enter does not switch input")
     state.reset()
     capsDown()
@@ -485,158 +499,12 @@ for key in [UInt16(36), 76] {
            "Caps + M + Enter runs Caps + M at once; Enter is never a shortcut key")
     expect(releaseCaps().launchKeys == nil, "releasing Caps after Enter runs nothing more")
 }
-for key in [UInt16(18), 0, 125, 126, 123, 124] {
-    state.reset()
-    capsDown()
-    _ = state.route(key: 49, down: true, repeated: false, bound: false)
-    _ = state.route(key: 49, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
-    _ = state.route(key: key, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
-    _ = state.route(key: key, down: false, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
-    let release = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
-    expect(release.openFolderSelection && !release.tap, "number, letter, or arrow input arms opening on Caps release")
-    capsDown()
-    expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "selection intent does not carry into another Caps hold")
-}
-for key in [UInt16(0), 125] {
-    state.reset()
-    capsDown()
-    _ = state.route(key: key, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
-    state.modifierChanged(otherModifier: false, commandModifier: true)
-    expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "key releases and modifiers do not count as selection input")
-}
 state.reset()
 capsDown()
-_ = state.route(key: 125, down: true, repeated: false, bound: false, otherModifier: true, input: .folderPicker, folderCount: 9)
-expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "Control/Option navigation does not arm selection")
+_ = state.route(key: 18, down: true, repeated: false, bound: true)
+expect(releaseCaps().launchKeys == [18], "Caps number launches its assigned app")
 state.reset()
-print("PASS: idle folder panel stays open, navigation arms Caps release, intent resets between holds")
-state.reset()
-capsDown()
-_ = state.route(key: 11, down: true, repeated: false, bound: false)
-let lateSpace = state.route(key: 49, down: true, repeated: false, bound: false)
-expect(lateSpace.showFolders && lateSpace.swallow, "Space after another key still opens Folders")
-expect(!releaseCaps().tap, "the gesture cannot switch input")
-_ = state.route(key: 11, down: false, repeated: false, bound: false)
-_ = state.route(key: 49, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
-state.reset()
-capsDown()
-_ = state.route(key: 3, down: true, repeated: false, bound: true)
-expect(state.route(key: 49, down: true, repeated: false, bound: false).showFolders, "Space after an app key opens Folders")
-expect(state.launchCandidate == nil && releaseCaps().launchKeys == nil, "the app shortcut before Space does not run")
-state.reset()
-capsDown()
-_ = state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true)
-expect(state.route(key: 49, down: true, repeated: false, bound: false).showFolders && !state.windowPreviewActive,
-       "Space after a window key opens Folders and drops the preview")
-expect(releaseCaps().window == nil, "the window action before Space is not applied")
-for modifierFirst in [false, true] {
-    state.reset()
-    _ = state.route(key: 79, down: true, repeated: false, bound: false, otherModifier: modifierFirst)
-    if !modifierFirst { state.modifierChanged(otherModifier: true) }
-    let blocked = state.route(key: 49, down: true, repeated: false, bound: false, otherModifier: true)
-    expect(!blocked.showFolders && blocked.swallow, "Control/Option blocks Caps Space and consumes it")
-    _ = state.route(key: 49, down: false, repeated: false, bound: false, otherModifier: true)
-    expect(!state.route(key: 49, down: true, repeated: false, bound: false).showFolders, "cancelled modifier gesture stays cancelled")
-    expect(!releaseCaps().tap, "modified gesture never switches input")
-}
-state.reset()
-capsDown()
-state.reset()
-expect(!state.route(key: 49, down: true, repeated: false, bound: false).showFolders, "pause clears pending Caps Space")
-expect(!releaseCaps().tap, "pause clears release action")
-state.reset()
-_ = state.route(key: 79, down: true, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
-let panelSpace = state.route(key: 49, down: true, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
-expect(!panelSpace.showFolders && !panelSpace.swallow, "existing selection panel never reopens; Space reaches the list")
-print("PASS: Caps Space, both release orders, repeats, cancellation, Enter consumption, Command no longer opens")
-state.reset()
-capsDown()
-expect(state.route(key: 49, down: true, repeated: false, bound: false).showFolders, "open panel while Caps held")
-let arrow = state.route(key: 125, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
-expect(!arrow.swallow && arrow.launchKeys == nil, "held Caps lets panel selection keys through even if bound")
-let folderRelease = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
-expect(folderRelease.openFolderSelection && !folderRelease.tap && !folderRelease.showFolders, "Caps release confirms folder selection after navigation")
-expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "orphan release cannot confirm again")
-capsDown()
-let panelTap = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
-expect(!panelTap.openFolderSelection && panelTap.tap, "standalone Caps in the list replays without opening a folder")
-capsDown()
-let closedPanelRelease = releaseCaps()
-expect(!closedPanelRelease.openFolderSelection && closedPanelRelease.tap, "outside panel Caps retains input switching")
-// Caps-held letters go directly to selection; their events never enter search.
-for releaseLetterFirst in [false, true] {
-    state.reset()
-    capsDown()
-    _ = state.route(key: KeyCode.space, down: true, repeated: false, bound: false)
-    let jump = state.route(key: 2, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: 4)
-    expect(jump.swallow && jump.folderJump == 2 && jump.launchKeys == nil, "Caps D jumps in the picker without typing D")
-    let repeating = state.route(key: 2, down: true, repeated: true, bound: false, input: .folderPicker, folderCount: 4)
-    expect(repeating.swallow && repeating.folderJump == nil, "held letter repeats do not edit search or jump again")
-    if releaseLetterFirst {
-        expect(state.route(key: 2, down: false, repeated: false, bound: false, input: .folderPicker).swallow, "letter release before Caps is consumed")
-    }
-    let release = state.route(key: KeyCode.hyper, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 4)
-    expect(release.openFolderSelection && !release.tap, "Caps release opens the jumped-to folder")
-    if !releaseLetterFirst {
-        expect(state.route(key: 2, down: false, repeated: false, bound: false, input: .folderPicker).swallow, "letter release after Caps is consumed")
-    }
-    let typing = state.route(key: 2, down: true, repeated: false, bound: false, input: .folderPicker)
-    expect(!typing.swallow && typing.folderJump == nil, "after Caps release ordinary typing reaches search")
-}
-state.reset()
-print("PASS: Caps release opens folder selection, navigation passthrough, no input switch, no duplicate confirmation")
-
-for (number, key) in [UInt16(18), 19, 20, 21, 23, 22, 26, 28, 25].enumerated() {
-    state.reset()
-    capsDown()
-    let shortcut = state.route(key: key, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
-    expect(shortcut.swallow && shortcut.folderNumber == number && shortcut.launchKeys == nil && !shortcut.openFolderSelection, "Caps number selects folder instead of launching a bound app")
-    let repeated = state.route(key: key, down: true, repeated: true, bound: true, input: .folderPicker, folderCount: 9)
-    expect(repeated.swallow && repeated.folderNumber == nil, "folder shortcut repeats are consumed")
-    let release = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9)
-    expect(release.openFolderSelection && !release.tap, "Caps release opens the numbered selection")
-    expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "numbered selection opens only once on Caps release")
-    expect(state.route(key: key, down: false, repeated: false, bound: true).swallow, "folder shortcut release is consumed even after panel closes")
-}
-state.reset()
-capsDown()
-for key in [UInt16(18), 25, 20] {
-    let move = state.route(key: key, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
-    expect(move.folderNumber != nil && !move.openFolderSelection, "multiple numbers can change selection during one Caps hold")
-    let keyUp = state.route(key: key, down: false, repeated: false, bound: true, input: .folderPicker, folderCount: 9)
-    expect(keyUp.swallow && !keyUp.openFolderSelection, "releasing a number does not open the folder")
-}
-expect(state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9).openFolderSelection, "only Caps release confirms the final selection")
-state.reset()
-expect(state.route(key: 18, down: true, repeated: false, bound: false, commandModifier: true, input: .folderPicker, folderCount: 9).folderNumber == nil, "Command number no longer selects a folder")
-capsDown()
-let appNumber = state.route(key: 18, down: true, repeated: false, bound: true)
-expect(appNumber.folderNumber == nil && releaseCaps().launchKeys == [18], "Caps number outside folder panel still launches its assigned app")
-state.reset()
-print("PASS: Caps folder numbers 1–9, repeat/release consumption, no duplicate opening, app shortcut isolation")
-
-for releaseSpaceFirst in [false, true] {
-    state.reset()
-    capsDown()
-    _ = state.route(key: 49, down: true, repeated: false, bound: false)
-    if releaseSpaceFirst { _ = state.route(key: 49, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 9) }
-    state.modifierChanged(otherModifier: false, commandModifier: true)
-    let letter = state.route(key: 0, down: true, repeated: false, bound: true, commandModifier: true, input: .folderPicker, folderCount: 9)
-    expect(letter.swallow && letter.folderJump == 0 && letter.launchKeys == nil, "Command-held Caps letters jump without editing search")
-    let letterUp = state.route(key: 0, down: false, repeated: false, bound: true, commandModifier: true, input: .folderPicker, folderCount: 9)
-    expect(letterUp.swallow, "Caps navigation letter release is consumed")
-    let number = state.route(key: 20, down: true, repeated: false, bound: true, commandModifier: true, input: .folderPicker, folderCount: 9)
-    expect(number.swallow && number.folderNumber == 2 && !number.openFolderSelection, "Command-held Caps number selects without opening")
-    let release = state.route(key: 79, down: false, repeated: false, bound: false, commandModifier: true, input: .folderPicker, folderCount: 9)
-    expect(release.openFolderSelection && !release.tap, "Caps release confirms even with Command still held")
-    let ordinaryCommand = state.route(key: 0, down: true, repeated: false, bound: false, commandModifier: true, input: .folderPicker, folderCount: 9)
-    expect(!ordinaryCommand.stripCommandModifier, "without Caps normal panel Command shortcuts remain available")
-}
-state.reset()
-capsDown()
-expect(!state.route(key: 0, down: true, repeated: false, bound: true, commandModifier: true).stripCommandModifier, "Command is preserved outside folder selection")
-state.reset()
-print("PASS: Command-held Caps folder letters/numbers, release confirmation, normal Command preservation")
+print("PASS: Caps Space has no action, Enter consumption, Caps number shortcuts")
 
 expect(FolderEntry(name: "projects", path: "/tmp/projects").originalName == "projects"
        && !FolderEntry(name: "projects", path: "/tmp/projects").isRenamed
@@ -693,27 +561,6 @@ for key in [UInt16(46), 3] {
 }
 print("PASS: confirmation repeat/release ownership, both release orders, focus changes, fresh input")
 
-for count in [0, 1, 8, 9] {
-    for (number, key) in [UInt16(18), 19, 20, 21, 23, 22, 26, 28, 25].enumerated() {
-        state.reset()
-        capsDown()
-        let result = state.route(key: key, down: true, repeated: false, bound: true, input: .folderPicker, folderCount: count)
-        expect(result.swallow && result.launchKeys == nil, "folder numbers never leak to app shortcuts")
-        expect(result.folderNumber == (number < count ? number : nil), "only existing folder numbers select rows")
-        let release = state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: count)
-        expect(release.openFolderSelection == (number < count), "invalid number cannot open the existing selection")
-        expect(state.route(key: key, down: false, repeated: false, bound: false).swallow, "invalid and valid number releases are consumed")
-    }
-}
-state.reset()
-capsDown()
-_ = state.route(key: 18, down: true, repeated: false, bound: false, input: .folderPicker, folderCount: 1)
-_ = state.route(key: 18, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 1)
-_ = state.route(key: 25, down: true, repeated: false, bound: false, input: .folderPicker, folderCount: 1)
-expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .folderPicker, folderCount: 1).openFolderSelection, "invalid number cancels earlier valid selection intent")
-print("PASS: folder number bounds, empty lists, invalid number after valid selection")
-
-
 let batchFolders = (0..<4).map { FolderEntry(name: "Folder \($0)", path: "/batch/\($0)") }
 for missingMask in 0..<16 {
     for failedMask in 0..<16 {
@@ -740,20 +587,20 @@ let emptyBatch = FolderBatchOpen.run([], isDirectory: { _ in fatalError("empty s
 expect(emptyBatch.openedCount == 0 && emptyBatch.failures.isEmpty, "empty batch is a no-op")
 print("PASS: 256 batch-open failure combinations, selection order, aggregated errors, empty selection")
 
-// The same standalone rule applies to normal apps, focused input (recording,
-// confirmation, editors), and folder lists. Only chord actions depend on context.
-for input in [KeyboardState.Input.shortcuts, .folderPicker, .inactive] {
+// The same standalone rule applies to normal apps and focused input (recording,
+// confirmation, editors). Only chord actions depend on context.
+for input in [KeyboardState.Input.shortcuts, .inactive] {
     state.reset()
     _ = state.route(key: 79, down: true, repeated: false, bound: false, input: input)
     _ = state.route(key: 79, down: true, repeated: true, bound: false, input: input)
     let release = state.route(key: 79, down: false, repeated: false, bound: false, input: input)
-    expect(release.tap && !release.openFolderSelection, "standalone Caps replays in every context")
+    expect(release.tap, "standalone Caps replays in every context")
     expect(!releaseCaps().tap, "standalone Caps replays once")
 }
 state.reset()
 _ = state.route(key: 79, down: true, repeated: false, bound: false, input: .inactive)
 let focusedSpace = state.route(key: 49, down: true, repeated: false, bound: false, input: .inactive)
-expect(!focusedSpace.showFolders && !focusedSpace.swallow, "focused input suppresses Caps Space action and receives Space")
+expect(!focusedSpace.swallow, "focused input receives Space")
 expect(!releaseCaps().tap, "Caps Space in focused input never replays")
 state.reset()
 capsDown()
@@ -813,10 +660,8 @@ _ = state.route(key: 3, down: true, repeated: false, bound: false)
 state.cancelGesture()
 _ = state.route(key: 79, down: true, repeated: true, bound: false)
 expect(!releaseCaps().tap, "a cancelled chord stays cancelled while Caps keeps repeating")
-expect(KeyCode.digits1to9 == [18, 19, 20, 21, 23, 22, 26, 28, 25], "number row matches virtual key codes")
-expect(KeyCode.lettersAndDigits.count == 36 && KeyCode.isReturn(36) && KeyCode.isReturn(76),
-       "derived key tables cover letters, digits, and both Return keys")
-print("PASS: hidden releases, orphan Caps autorepeats, derived key tables")
+expect(KeyCode.isReturn(36) && KeyCode.isReturn(76), "both Return keys confirm")
+print("PASS: hidden releases, orphan Caps autorepeats, Return keys")
 
 let suite = "local.maxvoid.Clutch.tests"
 let testDefaults = UserDefaults(suiteName: suite)!
@@ -838,7 +683,7 @@ expect(testDefaults.data(forKey: "Folders") == nil, "unreadable data is reported
 testDefaults.removePersistentDomain(forName: suite)
 print("PASS: saved lists load, round-trip, and preserve unreadable data")
 
-// Window layout: Caps + ← → ↑ ↓ − =.
+// Window layout: Caps + ← → ↑ ↓ ⌫ − =.
 state.reset()
 capsDown()
 let leftKey = state.route(key: 123, down: true, repeated: false, bound: true, windowKey: true)
@@ -878,9 +723,6 @@ _ = state.route(key: 126, down: false, repeated: false, bound: false, windowKey:
 _ = state.route(key: 123, down: false, repeated: false, bound: false, windowKey: true)
 expect(!state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true).swallow, "arrows pass through without Caps")
 _ = state.route(key: 123, down: false, repeated: false, bound: false, windowKey: true)
-capsDown()
-expect(state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true, input: .folderPicker, folderCount: 9).window == nil, "arrows navigate the folder list instead")
-_ = releaseCaps()
 state.reset()
 capsDown()
 expect(state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true, otherModifier: true).window == nil, "Control/Option + Caps + arrow does nothing")
@@ -892,8 +734,8 @@ _ = releaseCaps()
 state.reset()
 let defaultWindowKeys = WindowShortcuts.defaults
 expect(defaultWindowKeys.command(for: 123) == .left && defaultWindowKeys.command(for: 124) == .right && defaultWindowKeys.command(for: 126) == .up &&
-       defaultWindowKeys.command(for: 125) == .down && defaultWindowKeys.command(for: 27) == .smaller && defaultWindowKeys.command(for: 24) == .larger &&
-       defaultWindowKeys.command(for: 44) == .center && defaultWindowKeys.command(for: 0) == nil && defaultWindowKeys.command(for: unassignedKey) == nil,
+       defaultWindowKeys.command(for: KeyCode.delete) == .down && defaultWindowKeys.command(for: 125) == .center && defaultWindowKeys.command(for: 44) == nil && defaultWindowKeys.command(for: 27) == .smaller && defaultWindowKeys.command(for: 24) == .larger &&
+       defaultWindowKeys.command(for: 0) == nil && defaultWindowKeys.command(for: unassignedKey) == nil,
        "default window key table")
 
 let screen = CGRect(x: 0, y: 25, width: 1440, height: 875)
@@ -913,11 +755,11 @@ for (fraction, step) in [(CGFloat(1) / 2, 0), (CGFloat(2) / 3, 1), (CGFloat(1) /
 expect(memory?.restoreFrame == start, "repeats keep the original restore point")
 expect(same(WindowLayout.frame(for: .rightHalf(step: 0), window: start, screen: screen, restore: nil), CGRect(x: 720, y: 25, width: 720, height: 875)), "right half")
 expect(WindowLayout.action(for: .right, current: frame, screen: screen, memory: memory) == .rightHalf(step: 0), "switching sides starts at 1/2")
-// ↓ restores, then has nothing left to restore.
+// Restore (⌫), then nothing is left to restore.
 let restore = WindowLayout.action(for: .down, current: frame, screen: screen, memory: memory)!
-expect(restore == .restore && same(WindowLayout.frame(for: restore, window: frame, screen: screen, restore: memory?.restoreFrame), start), "↓ restores the frame before the first layout")
+expect(restore == .restore && same(WindowLayout.frame(for: restore, window: frame, screen: screen, restore: memory?.restoreFrame), start), "Restore returns the frame before the first layout")
 expect(WindowLayout.remember(restore, before: frame, after: start, memory: memory) == nil, "restore clears the memory")
-expect(WindowLayout.action(for: .down, current: start, screen: screen, memory: nil) == nil, "↓ without history does nothing")
+expect(WindowLayout.action(for: .down, current: start, screen: screen, memory: nil) == nil, "Restore without history does nothing")
 // ↑ fills the height, ↑ again maximizes.
 let upOnce = WindowLayout.action(for: .up, current: start, screen: screen, memory: nil)!
 let tall = WindowLayout.frame(for: upOnce, window: start, screen: screen, restore: nil)!
@@ -954,7 +796,7 @@ expect(WindowLayout.screenIndex(for: CGRect(x: -5000, y: 0, width: 100, height: 
 expect(WindowLayout.action(for: .up, current: leftHalf, screen: screen, memory: nil) == .maximize, "↑ on a half-screen window (already full height) maximizes")
 expect(WindowLayout.action(for: .up, current: CGRect(x: 300, y: 25, width: 600, height: 875), screen: screen, memory: nil) == .maximize, "↑ on a window stretched to full height by hand maximizes")
 expect(WindowLayout.action(for: .up, current: CGRect(x: 300, y: 25, width: 600, height: 860), screen: screen, memory: nil) == .maximizeHeight, "↑ on a window short of the bottom fills the height first")
-// Caps + / centers, keeping the window's size.
+// Caps + ↓ centers, keeping the window's size.
 expect(WindowLayout.action(for: .center, current: start, screen: screen, memory: nil) == .center, "/ centers")
 expect(same(WindowLayout.frame(for: .center, window: start, screen: screen, restore: nil), CGRect(x: 320, y: 213, width: 800, height: 500)), "center keeps the size")
 expect(same(WindowLayout.frame(for: .center, window: CGRect(x: 0, y: 0, width: 3000, height: 3000), screen: screen, restore: nil), screen), "an oversized window is fitted to the screen")
@@ -970,13 +812,33 @@ expect(WindowLayout.writes(from: start, to: leftHalf, screens: visibles) == [.po
 expect(WindowLayout.writes(from: start, to: CGRect(x: 185, y: 85, width: 830, height: 530), screens: visibles) == [.size, .position], "growing with room resizes first")
 expect(WindowLayout.writes(from: CGRect(x: 1300, y: 800, width: 300, height: 300), to: CGRect(x: 1400, y: 900, width: 2000, height: 1000), screens: visibles) == [.size, .position, .size], "no on-screen order falls back to size, position, size")
 expect(WindowLayout.writes(from: CGRect(x: 0, y: 25, width: 718, height: 875), to: leftHalf, screens: visibles).isEmpty, "a near-match within tolerance writes nothing")
-expect(WindowLayout.corrections(from: leftHalf, to: leftHalf).isEmpty, "a landed frame needs no correction")
-expect(WindowLayout.corrections(from: CGRect(x: 0, y: 25, width: 720, height: 600), to: leftHalf) == [.size], "a clamped size is written again")
-expect(WindowLayout.corrections(from: CGRect(x: 40, y: 25, width: 600, height: 875), to: leftHalf) == [.size, .position], "size before position when both missed")
+// A refused size is kept, not requested again, except once after a move.
+expect(!WindowLayout.retriesSize(after: [.size, .position], result: leftHalf, target: leftHalf), "a landed frame needs no retry")
+expect(WindowLayout.retriesSize(after: [.size, .position], result: CGRect(x: 0, y: 25, width: 700, height: 875), target: leftHalf),
+       "a size refused before a move is retried once after it")
+expect(!WindowLayout.retriesSize(after: [.position, .size], result: CGRect(x: 0, y: 25, width: 700, height: 875), target: leftHalf)
+       && !WindowLayout.retriesSize(after: [.size], result: CGRect(x: 0, y: 25, width: 700, height: 875), target: leftHalf),
+       "a size refused after the move is accepted")
+// The accepted size is aligned to the edges the target touches, like Rectangle.
+expect(WindowLayout.aligned(leftHalf.size, to: leftHalf, in: screen) == leftHalf, "a landed size stays where it is")
+expect(WindowLayout.aligned(CGSize(width: 714, height: 875), to: rightHalf, in: screen) == CGRect(x: 726, y: 25, width: 714, height: 875),
+       "a narrower right half still ends at the right edge")
+expect(WindowLayout.aligned(CGSize(width: 714, height: 875), to: leftHalf, in: screen) == CGRect(x: 0, y: 25, width: 714, height: 875),
+       "a narrower left half stays at the left edge")
+expect(WindowLayout.aligned(CGSize(width: 1434, height: 867), to: screen, in: screen) == CGRect(x: 3, y: 29, width: 1434, height: 867),
+       "a window short of both edges is centered in the target")
+expect(WindowLayout.aligned(CGSize(width: 790, height: 494), to: CGRect(x: 320, y: 213, width: 800, height: 500), in: screen)
+       == CGRect(x: 325, y: 216, width: 790, height: 494), "a centered target stays centered")
+expect(WindowLayout.aligned(CGSize(width: 714, height: 874), to: rightHalf, in: screen) == CGRect(x: 726, y: 25, width: 714, height: 874),
+       "a point short of the Dock edge is left alone")
+expect(WindowLayout.aligned(CGSize(width: 900, height: 875), to: rightHalf, in: screen) == CGRect(x: 540, y: 25, width: 900, height: 875),
+       "a window wider than its half stays on screen")
+expect(WindowLayout.aligned(CGSize(width: 1600, height: 1000), to: screen, in: screen) == CGRect(x: 0, y: 25, width: 1600, height: 1000),
+       "an oversized window keeps its top-left visible")
 // Window shortcuts edited on Preferences > Windows.
 var windowKeys = WindowShortcuts.defaults
 windowKeys.assign(40, to: .center)
-expect(windowKeys.key(for: .center) == 40 && windowKeys.command(for: 40) == .center && windowKeys.command(for: 44) == nil, "reassigning frees the old key")
+expect(windowKeys.key(for: .center) == 40 && windowKeys.command(for: 40) == .center && windowKeys.command(for: 125) == nil, "reassigning frees the old key")
 windowKeys.assign(123, to: .right)
 expect(windowKeys.key(for: .right) == 123 && windowKeys.key(for: .left) == nil, "taking another action's key leaves it unassigned")
 windowKeys.clear(123)
@@ -1010,7 +872,7 @@ expect(plan.frame.width == 720, "← wraps back to 1/2")
 plan.apply(.right)
 expect(plan.frame == CGRect(x: 720, y: 25, width: 720, height: 875), "→ switches the preview to the right half")
 plan.apply(.down)
-expect(!plan.applied && plan.frame == planStart, "↓ after other keys previews what ↓ alone would: nothing without a restore point")
+expect(!plan.applied && plan.frame == planStart, "Restore after other keys previews what it alone would: nothing without a restore point")
 var leftThenUp = WindowPlan(start: planStart, screen: planScreen, memory: nil)
 leftThenUp.apply(.left)
 leftThenUp.apply(.up)
@@ -1018,7 +880,7 @@ expect(leftThenUp.frame == CGRect(x: 320, y: 25, width: 800, height: 875), "← 
 var restorePlan = WindowPlan(start: CGRect(x: 0, y: 25, width: 720, height: 875), screen: planScreen,
                              memory: WindowMemory(restoreFrame: planStart, lastAction: .leftHalf(step: 0), lastFrame: CGRect(x: 0, y: 25, width: 720, height: 875)))
 restorePlan.apply(.down)
-expect(restorePlan.applied && restorePlan.frame == planStart && restorePlan.memory == nil, "↓ previews the frame before the first layout")
+expect(restorePlan.applied && restorePlan.frame == planStart && restorePlan.memory == nil, "Restore previews the frame before the first layout")
 var heightPlan = WindowPlan(start: planStart, screen: planScreen, memory: nil)
 heightPlan.apply(.up)
 expect(heightPlan.frame == CGRect(x: 320, y: 25, width: 800, height: 875), "↑ previews fill height")
@@ -1037,7 +899,7 @@ sizePlan.apply(.smaller)
 expect(sizePlan.frame == CGRect(x: 305, y: 198, width: 830, height: 530), "− steps the preview back")
 var nothing = WindowPlan(start: planStart, screen: planScreen, memory: nil)
 nothing.apply(.down)
-expect(!nothing.applied, "↓ without a restore point previews and applies nothing")
+expect(!nothing.applied, "Restore without a restore point previews and applies nothing")
 let remembered = WindowMemory(restoreFrame: planStart, lastAction: .leftHalf(step: 0), lastFrame: CGRect(x: 0, y: 25, width: 720, height: 875))
 var continued = WindowPlan(start: remembered.lastFrame, screen: planScreen, memory: remembered)
 continued.apply(.left)

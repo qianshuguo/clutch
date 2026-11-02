@@ -177,7 +177,7 @@ extension AppDelegate {
     func assignShortcut(_ keys: [UInt16], to owner: ShortcutOwner, recorder: KeyRecorder) -> Bool {
         guard !keys.isEmpty, keys.count <= (owner.isWindow ? 1 : AppShortcut.maxKeys),
               let name = allShortcuts.first(where: { $0.owner == owner })?.name else { return false }
-        guard keys.allSatisfy({ shortcutKeyAvailable($0) }) else { return false }
+        guard keys.allSatisfy({ shortcutKeyAvailable($0, for: owner) }) else { return false }
         let conflicts = shortcutConflicts(keys, for: owner)
         let label = shortcutLabel(keys)
         if !conflicts.owners.isEmpty {
@@ -225,14 +225,16 @@ extension AppDelegate {
         if websitesChanged { saveWebsites() }
         if windowsChanged { saveWindowShortcuts() }
     }
-    // Caps + Space opens Folders, Caps + Delete takes back a key and Caps + Return
-    // confirms, so no list can take them.
-    func shortcutKeyAvailable(_ code: UInt16) -> Bool {
+    // Caps + Space is kept free, Caps + Delete takes back a key and Caps + Return
+    // confirms, so no list can take them. A window action can take Delete: it is a
+    // single key, so there is nothing to take back.
+    func shortcutKeyAvailable(_ code: UInt16, for owner: ShortcutOwner) -> Bool {
+        if code == KeyCode.delete && owner.isWindow { return true }
         guard code == KeyCode.space || code == KeyCode.delete || KeyCode.isReturn(code) else { return true }
         NSSound.beep()
-        let use = code == KeyCode.space ? "Folders"
-            : code == KeyCode.delete ? "taking back keys while Caps is held" : "confirming"
-        logStatus("\(shortcutLabel([code])) is reserved for \(use). Choose another key.")
+        let use = code == KeyCode.space ? ""
+            : code == KeyCode.delete ? " for taking back keys while Caps is held" : " for confirming"
+        logStatus("\(shortcutLabel([code])) is reserved\(use). Choose another key.")
         return false
     }
     // "A", "A and B", "A, B and C".
@@ -355,12 +357,17 @@ extension AppDelegate {
             }
             return
         }
-        showingLaunchConfirmation = true
-        closePreferencesForAction(keepingApplicationActive: true)
-        let confirmed = capsOverlay.confirm(appName: binding.name, icon: workspace.icon(forFile: target.path))
-        showingLaunchConfirmation = false
-        hideDockIfIdle()
-        guard confirmed else { return }
+        if asksBeforeOpening {
+            showingLaunchConfirmation = true
+            closePreferencesForAction(keepingApplicationActive: true)
+            let confirmed = capsOverlay.confirm(appName: binding.name, icon: workspace.icon(forFile: target.path))
+            showingLaunchConfirmation = false
+            hideDockIfIdle()
+            guard confirmed else { return }
+        } else {
+            // Ask Before Opening is off (General): open at once, like a running app.
+            closePreferencesForAction()
+        }
         let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = true
         workspace.openApplication(at:target, configuration:configuration) { [weak self] app,error in
             DispatchQueue.main.async {

@@ -42,72 +42,74 @@ extension AppDelegate: NSToolbarDelegate {
         toolbarDivider.autoresizingMask = [.width, .minYMargin]
         content.addSubview(toolbarDivider)
         let general = pages[0]
-        let divider = NSBox(frame: NSRect(x: 24, y: 194, width: 412, height: 1))
-        divider.boxType = .separator
-        divider.autoresizingMask = [.width, .minYMargin]
-        general.addSubview(divider)
-
-        // Center a shared content column, with both sections left-aligned inside it.
-        func optionGroup(centerFromTop: CGFloat, spacing: CGFloat) -> NSStackView {
-            let stack = NSStackView()
+        // Traditional preference layout: native checkboxes on the shared surface,
+        // with one quiet divider and a common leading edge.
+        func group(_ views: [NSView], spacing: CGFloat) -> NSStackView {
+            let stack = NSStackView(views: views)
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = spacing
-            stack.detachesHiddenViews = true
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            general.addSubview(stack)
-            NSLayoutConstraint.activate([
-                stack.centerXAnchor.constraint(equalTo: general.centerXAnchor),
-                stack.leadingAnchor.constraint(greaterThanOrEqualTo: general.leadingAnchor, constant: 24),
-                stack.trailingAnchor.constraint(lessThanOrEqualTo: general.trailingAnchor, constant: -24),
-                stack.centerYAnchor.constraint(equalTo: general.topAnchor, constant: centerFromTop)
-            ])
             return stack
         }
-        func addDetail(_ detail: NSView, to stack: NSStackView) {
-            let inset = NSStackView(views: [detail])
-            inset.orientation = .vertical
-            inset.alignment = .leading
-            inset.edgeInsets = NSEdgeInsets(top: 0, left: 20, bottom: 0, right: 0)
-            stack.addArrangedSubview(inset)
-        }
-        let activation = optionGroup(centerFromTop: 58, spacing: 4)
-        let otherOptions = optionGroup(centerFromTop: 213, spacing: 14)
-        activation.widthAnchor.constraint(equalTo: otherOptions.widthAnchor).isActive = true
         toggleButton = NSButton(checkboxWithTitle: "Enable Clutch", target: self, action: #selector(toggle))
-        let notice = NSButton(title: "Waiting for Accessibility access", target: self, action: #selector(openPermissions))
+        let notice = NSButton(title: "Grant Accessibility access…", target: self, action: #selector(openPermissions))
         notice.isBordered = false
         notice.alignment = .left
-        let noticeTitle = NSMutableAttributedString(string: notice.title, attributes: [
+        notice.attributedTitle = NSAttributedString(string: notice.title, attributes: [
             .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.secondaryLabelColor
+            .foregroundColor: NSColor.linkColor
         ])
-        noticeTitle.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue,
-                                 range: (notice.title as NSString).range(of: "Accessibility access"))
-        notice.attributedTitle = noticeTitle
-        notice.setAccessibilityLabel("Waiting for Accessibility access. Open Accessibility settings.")
-        activation.addArrangedSubview(toggleButton)
-        // Place the notice below the checkbox without changing the centered group's height.
-        notice.translatesAutoresizingMaskIntoConstraints = false
-        general.addSubview(notice)
-        NSLayoutConstraint.activate([
-            notice.leadingAnchor.constraint(equalTo: toggleButton.leadingAnchor, constant: 20),
-            notice.topAnchor.constraint(equalTo: toggleButton.bottomAnchor, constant: 4),
-            notice.trailingAnchor.constraint(lessThanOrEqualTo: general.trailingAnchor, constant: -24)
-        ])
-        accessibilityNoticeRow = notice
+        notice.setAccessibilityLabel("Grant Accessibility access. Open Accessibility settings.")
+        notice.isHidden = true
+        accessibilityNotice = notice
+        askBeforeOpeningCheckbox = NSButton(checkboxWithTitle: "Ask Before Opening", target: self,
+                                            action: #selector(changeAskBeforeOpening))
         loginCheckbox = NSButton(checkboxWithTitle: "Launch on Login", target: self, action: #selector(changeLoginLaunch))
-        otherOptions.addArrangedSubview(loginCheckbox!)
         hideCheckbox = NSButton(checkboxWithTitle: "Hide Status Bar Icon", target: self, action: #selector(changeStatusIcon))
-        let hint = label("Open Clutch again to show Preferences.", frame: .zero, size: 11)
+        // Both states share one fixed line, so permission changes never move the form.
+        let permissionLine = NSView()
+        let hint = label("Use Caps Lock shortcuts.", frame: .zero, size: 11)
         hint.textColor = .secondaryLabelColor
-        let visibility = NSStackView()
-        visibility.orientation = .vertical
-        visibility.alignment = .leading
-        visibility.spacing = 4
-        visibility.addArrangedSubview(hideCheckbox!)
-        addDetail(hint, to: visibility)
-        otherOptions.addArrangedSubview(visibility)
+        accessibilityHint = hint
+        for view in [hint, notice] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            permissionLine.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: permissionLine.leadingAnchor, constant: 20),
+                view.trailingAnchor.constraint(lessThanOrEqualTo: permissionLine.trailingAnchor),
+                view.centerYAnchor.constraint(equalTo: permissionLine.centerYAnchor)
+            ])
+        }
+        permissionLine.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        let enable = group([toggleButton, permissionLine], spacing: 4)
+        permissionLine.widthAnchor.constraint(equalTo: enable.widthAnchor).isActive = true
+        func describedOption(_ checkbox: NSButton, text: String) -> NSStackView {
+            let hint = NSTextField(wrappingLabelWithString: text)
+            hint.font = .systemFont(ofSize: 11)
+            hint.textColor = .secondaryLabelColor
+            hint.preferredMaxLayoutWidth = 280
+            hint.widthAnchor.constraint(equalToConstant: 280).isActive = true
+            let inset = group([hint], spacing: 0)
+            inset.edgeInsets = NSEdgeInsets(top: 0, left: 20, bottom: 0, right: 0)
+            return group([checkbox, inset], spacing: 4)
+        }
+        let confirmation = describedOption(askBeforeOpeningCheckbox!,
+            text: "Ask before launching an app or opening a website that isn’t already open.")
+        let activation = group([enable, confirmation], spacing: 18)
+        let visibility = describedOption(hideCheckbox!, text: "Open Clutch again to show Preferences.")
+        let otherOptions = group([loginCheckbox!, visibility], spacing: 18)
+        let divider = NSBox()
+        divider.boxType = .separator
+        let column = group([activation, divider, otherOptions], spacing: 22)
+        column.translatesAutoresizingMaskIntoConstraints = false
+        general.addSubview(column)
+        NSLayoutConstraint.activate([
+            column.widthAnchor.constraint(equalToConstant: 300),
+            column.centerXAnchor.constraint(equalTo: general.centerXAnchor),
+            column.centerYAnchor.constraint(equalTo: general.centerYAnchor),
+            activation.widthAnchor.constraint(equalTo: column.widthAnchor),
+            divider.widthAnchor.constraint(equalTo: column.widthAnchor)
+        ])
 
         let apps = pages[1]
         let scroll = makeListScroll(size: Self.preferenceSize, headerHeight: 28)
@@ -130,7 +132,7 @@ extension AppDelegate: NSToolbarDelegate {
             ("Type in the list", "Jump to an app by name")
         ], to: apps, trailing: Self.preferenceSize.width - 12)
         addApplicationSearch(to: apps, list: applicationList, scroll: scroll, before: appsHelp)
-        let folderContent = makeFoldersContent(size: Self.preferenceSize, presentation: .preferences)
+        let folderContent = makeFoldersContent(size: Self.preferenceSize)
         preferencesFolderList = folderContent.controller
         pages[2].addSubview(folderContent.content)
         addWebsitesPage(to: pages[3])

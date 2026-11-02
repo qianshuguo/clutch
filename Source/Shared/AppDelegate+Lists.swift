@@ -89,14 +89,12 @@ extension AppDelegate {
         cell.addSubview(recorder)
         return recorder
     }
-    func makeListScroll(size: NSSize, headerHeight: CGFloat = 0,
-                        fitsTableToViewport: Bool = false) -> ListScrollView {
+    func makeListScroll(size: NSSize, headerHeight: CGFloat = 0) -> NSScrollView {
         let headerSpacing: CGFloat = headerHeight > 0 ? 6 : 0
         let footerSpacing: CGFloat = 6
-        let scroll = ListScrollView(frame: NSRect(x: 0, y: 33 + footerSpacing,
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 33 + footerSpacing,
                                                 width: size.width,
                                                 height: size.height - 33 - headerHeight - headerSpacing - footerSpacing))
-        scroll.fitsTableToViewport = fitsTableToViewport
         scroll.autoresizingMask = [.width, .height]
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -119,11 +117,11 @@ extension AppDelegate {
         button.setAccessibilityLabel(tip)
         return button
     }
-    func addListControls(to content: NSView, width: CGFloat, leadingInset: CGFloat = 0,
+    func addListControls(to content: NSView, width: CGFloat,
                          add: @escaping () -> Void, remove: @escaping () -> Void, itemName: String) {
         addListBottomDivider(to: content, width: width)
-        content.addSubview(makeListButton(symbol: "plus", x: 8 + leadingInset, action: add, tip: "Add \(itemName)"))
-        content.addSubview(makeListButton(symbol: "minus", x: 38 + leadingInset, action: remove, tip: "Remove \(itemName)"))
+        content.addSubview(makeListButton(symbol: "plus", x: 8, action: add, tip: "Add \(itemName)"))
+        content.addSubview(makeListButton(symbol: "minus", x: 38, action: remove, tip: "Remove \(itemName)"))
     }
     // The rule above a list's 32 pt bottom bar.
     func addListBottomDivider(to content: NSView, width: CGFloat) {

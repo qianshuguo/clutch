@@ -67,32 +67,18 @@ owner.state.reset()
 print("PASS: Caps system-key replay encoding, matching release, event-tap bypass")
 owner.bindings = [AppShortcut(keys: [3], name: "Example", path: "/Applications/Example.app", bundleID: nil)]
 owner.folders = [FolderEntry(name: "First", path: "/tmp"), FolderEntry(name: "Second", path: "/")]
-let preferences = owner.makeFoldersContent(size: AppDelegate.preferenceSize, presentation: .preferences)
-let picker = owner.makeFoldersContent(size: AppDelegate.preferenceSize)
+let preferences = owner.makeFoldersContent(size: AppDelegate.preferenceSize)
+// As in Preferences, so saving the folders reloads this table.
+owner.preferencesFolderList = preferences.controller
 let preferencesTable = preferences.controller.table
-let pickerTable = picker.controller.table
 preferencesTable.reloadData()
-pickerTable.reloadData()
-preferencesTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-pickerTable.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
-expect(preferencesTable.selectedRow == 0 && pickerTable.selectedRow == 1, "folder views retain independent selections")
 expect(preferencesTable.dataSource === preferences.controller, "preferences retains its own table data source")
-expect(pickerTable.dataSource === picker.controller, "picker retains its own table data source")
-expect(preferences.controller.tableView(preferencesTable, rowViewForRow: 0) is InsetListRowView, "preferences shares the picker selection style")
-expect(picker.controller.tableView(pickerTable, rowViewForRow: 0) is InsetListRowView, "picker keeps inset row style")
-for (controller, expectedHint) in [(preferences.controller, false), (picker.controller, true)] {
-    let table = controller.table
-    let cell = controller.tableView(table, viewFor: table.tableColumns[1], row: 0)!
-    let labels = cell.subviews.compactMap { ($0 as? NSTextField)?.stringValue }
-    expect(labels.contains("⇪1") == expectedHint, "only picker rows show Caps number hints")
-    expect(controller.tableView(table, typeSelectStringFor: nil, row: 1) == "Second", "folder type selection uses display names")
-}
+expect(preferences.controller.tableView(preferencesTable, rowViewForRow: 0) is InsetListRowView, "folders use the inset selection style")
+expect(preferences.controller.tableView(preferencesTable, typeSelectStringFor: nil, row: 1) == "Second", "folder type selection uses display names")
 // Preferences > Folders: App List's shortcut fields; the path shows when pointing at a folder.
 expect(preferencesTable.tableColumns.map { $0.title } == ["Name", "Shortcut"], "Folders preferences show shortcut fields, not paths")
-let pickerNameCell = picker.controller.tableView(pickerTable, viewFor: pickerTable.tableColumns[0], row: 0)!
-expect(pickerNameCell.toolTip == "/tmp", "the picker shows the path only when pointing at a folder")
-expect(!picker.controller.tableView(pickerTable, viewFor: pickerTable.tableColumns[1], row: 0)!.subviews
-        .contains { ($0 as? NSTextField)?.stringValue.contains("/") == true }, "picker rows show no path")
+expect(!preferences.controller.tableView(preferencesTable, viewFor: preferencesTable.tableColumns[1], row: 0)!.subviews
+        .contains { ($0 as? NSTextField)?.stringValue.contains("/") == true }, "folder rows show no path")
 let folderNameCell = preferences.controller.tableView(preferencesTable, viewFor: preferencesTable.tableColumns[0], row: 0)!
 expect(folderNameCell.toolTip == "/tmp", "pointing at a folder shows its path")
 func folderRecorder(_ row: Int) -> KeyRecorder {
@@ -160,10 +146,8 @@ owner.addFolder(name: " Added ", location: addedFolder, to: preferences.controll
 expect(owner.folders.last?.name == "Added" && owner.folders.last?.path == addedFolder, "a folder can be added with a name")
 owner.folders.removeLast(); owner.saveFolders()
 try? FileManager.default.removeItem(atPath: addedFolder)
-expect(!pickerTable.focusesOnRightClick && preferencesTable.focusesOnRightClick,
-       "a right-click in the picker leaves focus in its search field")
 owner.folders[0].name = "First"; owner.folders[1].name = "Second"
-preferencesTable.reloadData(); pickerTable.reloadData()
+preferencesTable.reloadData()
 let oldFolders = try! JSONDecoder().decode([FolderEntry].self, from: Data(#"[{"name":"Old","path":"/old"}]"#.utf8))
 expect(oldFolders[0].keys.isEmpty, "a folder saved without a shortcut loads")
 let savedFolder = FolderEntry(name: "Saved", path: "/saved", keys: [2, 13])
@@ -173,77 +157,6 @@ expect(savedFolderJSON.contains(#""shortcut":[2,13]"#) && savedFolderJSON.compon
 expect(try! JSONDecoder().decode([FolderEntry].self, from: JSONEncoder().encode([savedFolder])) == [savedFolder],
        "folder shortcuts round-trip")
 print("PASS: folder shortcut fields")
-// Folders search: the field filters the picker by name or path and selects the best match.
-let search = picker.controller
-let searchField = NSSearchField()
-search.searchField = searchField
-let fieldEditor = NSTextView()
-func typeSearch(_ text: String) {
-    searchField.stringValue = text
-    search.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: searchField))
-}
-expect(!pickerTable.allowsTypeSelect && preferencesTable.allowsTypeSelect, "only the picker replaces type selection with search")
-typeSearch("Se")
-expect(search.filter == "Se" && pickerTable.numberOfRows == 1 && search.folderIndex(forRow: 0) == 1,
-       "the search keeps folders whose name matches, ignoring case")
-expect(pickerTable.selectedRow == 0 && search.selectedFolderIndices == IndexSet(integer: 1), "the first match is selected and maps to its folder")
-let firstCell = search.tableView(pickerTable, viewFor: pickerTable.tableColumns[0], row: 0)!
-expect(firstCell.subviews.compactMap { ($0 as? NSTextField)?.stringValue }.contains("Second"), "filtered rows show their own folder")
-typeSearch("tmp")
-expect(pickerTable.numberOfRows == 0, "paths do not match")
-typeSearch("nothing here")
-expect(pickerTable.numberOfRows == 0 && search.selectedFolderIndices.isEmpty, "no matches selects nothing")
-expect(search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.cancelOperation(_:)))
-       && search.filter.isEmpty && searchField.stringValue.isEmpty && pickerTable.numberOfRows == 2,
-       "Escape clears the search first")
-expect(search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.moveDown(_:)))
-       && pickerTable.selectedRow == 1, "↓ in the field moves the list selection")
-expect(search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.moveDown(_:)))
-       && pickerTable.selectedRow == 1, "↓ stops at the last row")
-expect(search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.moveUp(_:)))
-       && pickerTable.selectedRow == 0, "↑ in the field moves the list selection")
-expect(!search.control(searchField, textView: fieldEditor, doCommandBy: #selector(NSResponder.deleteBackward(_:))),
-       "editing commands stay with the field")
-search.setFilter("Fi")
-expect(searchField.stringValue == "Fi", "setting the filter updates the field")
-search.setFilter("")
-search.jumpToFolder(key: 1, time: 10) // S
-expect(pickerTable.selectedRow == 1 && pickerTable.numberOfRows == 2 && search.filter.isEmpty && searchField.stringValue.isEmpty,
-       "Caps S jumps to Second without filtering or typing into search")
-search.jumpToFolder(key: 14, time: 10.1) // E
-expect(pickerTable.selectedRow == 1 && pickerTable.numberOfRows == 2, "nearby Caps letters refine the jump")
-search.jumpToFolder(key: 3, time: 12) // F
-expect(pickerTable.selectedRow == 0, "a later Caps letter starts a new jump")
-search.resetCapsJump()
-search.jumpToFolder(key: 1, time: 12.1)
-expect(pickerTable.selectedRow == 1 && search.filter.isEmpty, "a new Caps gesture resets the jump text")
-typeSearch("Fi")
-expect(pickerTable.numberOfRows == 1 && search.filter == "Fi", "ordinary search still filters after Caps navigation")
-search.setFilter("")
-search.searchField = nil
-print("PASS: Folders search field filters by name, maps rows, Escape/arrows")
-let ranked = [FolderEntry(name: "Kidocs", path: "/k"), FolderEntry(name: "Project Docs", path: "/p"),
-              FolderEntry(name: "Downloads", path: "/d"), FolderEntry(name: "Photo Dump", path: "/docs/x"),
-              FolderEntry(name: "Docker", path: "/r")]
-expect(FolderListController.ordered(ranked, query: "doc") == [1, 4, 0],
-       "word starts first (in list order), then names containing it; paths never match")
-expect(FolderListController.ordered(ranked, query: "pd") == [1, 3],
-       "initials of separate words match after word starts")
-expect(FolderListController.ordered(ranked, query: "d") == [1, 2, 3, 4, 0], "one letter matches word starts first")
-expect(FolderListController.ordered([FolderEntry(name: "MyProject", path: "/m"), FolderEntry(name: "Résumé", path: "/r")], query: "proj") == [0],
-       "camel-case humps start words")
-expect(FolderListController.ordered([FolderEntry(name: "Résumé", path: "/r")], query: "resu") == [0], "accents are ignored")
-let chinese = [FolderEntry(name: "下载", path: "/x"), FolderEntry(name: "文件夹", path: "/w"),
-               FolderEntry(name: "我的文档", path: "/d")]
-expect(FolderListController.ordered(chinese, query: "wenjian") == [1], "pinyin syllables match Chinese names")
-expect(FolderListController.ordered(chinese, query: "wen'jian") == [1] && FolderListController.ordered(chinese, query: "wen jian") == [1],
-       "the input method's apostrophes and spaces are ignored")
-expect(FolderListController.ordered(chinese, query: "jian") == [1], "any syllable starts a word")
-expect(FolderListController.ordered(chinese, query: "wjj") == [1], "syllable initials match")
-expect(FolderListController.ordered(chinese, query: "w").first == 1 || FolderListController.ordered(chinese, query: "w").first == 2,
-       "one letter matches syllable starts")
-expect(FolderListController.ordered(chinese, query: "文件") == [1], "Chinese characters still match directly")
-print("PASS: Folders search ranks word starts, initials, then contains")
 
 let applications = ApplicationListController(owner: owner)
 owner.configureList(applications.table, width: AppDelegate.preferenceSize.width, title: "Application")
@@ -267,13 +180,7 @@ expect(!cell.subviews.contains { $0 is NSTextField }, "the shortcut field includ
 let detailColumn = applications.table.frameOfCell(atColumn: 1, row: 0)
 expect(abs(header.secondLabel.frame.minX + ListGeometry.labelTextInset - (detailColumn.minX + recorder.frame.minX)) < 0.01,
        "shortcut header text lines up with the left edge of the shortcut fields")
-for (content, controller) in [(preferences.content, preferences.controller), (picker.content, picker.controller)] {
-    let scroll = content.subviews.compactMap { $0 as? ListScrollView }.first!
-    let isPicker = controller.presentation == .picker
-    expect(scroll.fitsTableToViewport == isPicker, "only picker columns fit the viewport")
-    expect(content.subviews.contains { $0 is PlainListHeaderView } == !isPicker,
-           "only preferences has a header")
-}
+expect(preferences.content.subviews.contains { $0 is PlainListHeaderView }, "the Folders page has a header")
 expect(owner.assignShortcut([46, 46], to: .app(path: owner.bindings[0].path), recorder: recorder) && owner.bindings[0].keys == [46, 46], "Caps + M + M uses the same key twice")
 expect(!owner.assignShortcut([46, KeyCode.space], to: .app(path: owner.bindings[0].path), recorder: recorder), "Space stays reserved as a second key")
 expect(!owner.assignShortcut([46, 13, KeyCode.space], to: .app(path: owner.bindings[0].path), recorder: recorder), "Space stays reserved as a third key")
@@ -328,6 +235,8 @@ recorder.capsKeyPressed(7)
 expect(recorder.title == "⇪T H E", "a fourth key is not recorded")
 recorder.capsKeyPressed(KeyCode.delete)
 expect(recorder.title == "⇪T H…", "Caps + Delete removes the last key")
+recorder.capsKeyPressed(KeyCode.space)
+expect(recorder.title == "⇪T H…", "Caps + Space is not recorded")
 recorder.capsKeyPressed(KeyCode.delete)
 recorder.capsKeyPressed(KeyCode.delete)
 expect(recorder.title == "⇪…", "Caps + Delete can remove every key")
@@ -388,7 +297,7 @@ expect(invoked == 1, "list buttons invoke their explicit callback once")
 weak var releasedController: FolderListController?
 var retainedTable: FolderTableView?
 do {
-    let controller = FolderListController(owner: owner, presentation: .picker)
+    let controller = FolderListController(owner: owner)
     releasedController = controller
     retainedTable = controller.table
 }
@@ -429,7 +338,7 @@ expect(trackingTable.selectedRowIndexes == IndexSet(integersIn: 0..<4), "Shift-c
 trackClick(row: 1, modifiers: .command)
 expect(trackingTable.selectedRowIndexes == IndexSet([0, 2, 3]), "Command-click still toggles an individual row")
 trackingWindow.close()
-print("PASS: list delegates, independent selections, row styles, shortcut hints, recording origin, stale cells, button callbacks, controller release")
+print("PASS: list delegates, row styles, recording origin, stale cells, button callbacks, controller release")
 
 for count in 0...5 {
     for mask in 0..<(1 << count) {
@@ -444,7 +353,7 @@ for count in 0...5 {
 var unchanged = [0, 1]
 expect(!ListSelection.remove(IndexSet(integer: 99), from: &unchanged) && unchanged == [0, 1],
        "stale selection is harmless")
-print("PASS: shared deletion boundaries, presentation settings, header/body alignment")
+print("PASS: shared deletion boundaries, header/body alignment")
 
 // Preferences > Windows lists window actions with App List's Caps + key fields.
 let windowOwner = AppDelegate()
@@ -465,16 +374,30 @@ let savedWindowKeys = UserDefaults.standard.data(forKey: DefaultsKey.windowShort
 windowOwner.windowShortcuts = .defaults
 if let recorder = windowRecorder(centerRow) {
     expect(windowOwner.assignShortcut([40], to: .window(.center), recorder: recorder), "a free key is assigned without asking")
-    expect(!windowOwner.assignShortcut([KeyCode.space], to: .window(.center), recorder: recorder), "Space stays reserved for Folders")
+    expect(!windowOwner.assignShortcut([KeyCode.space], to: .window(.center), recorder: recorder), "Space stays reserved")
     expect(!windowOwner.assignShortcut([40, 13], to: .window(.center), recorder: recorder), "a window action takes one key")
 }
 expect(windowOwner.windowShortcuts.key(for: .center) == 40 && windowRecorder(centerRow)?.title == "⇪K", "assignment updates the list")
 expect(windowRecorder(centerRow)?.maxKeys == 1, "window actions record one key")
+let restoreRow = WindowCommand.allCases.firstIndex(of: .down)!
+windowOwner.windowShortcuts = .defaults
+windowList.table.reloadData()
+expect(windowRecorder(restoreRow)?.title == "⇪⌫", "Restore defaults to Caps + Delete")
+if let recorder = windowRecorder(centerRow) {
+    recorder.recording = true
+    recorder.capsKeyPressed(KeyCode.delete)
+    expect(recorder.title == "⇪⌫", "a window action field records Delete")
+    recorder.cancelRecording()
+    windowOwner.windowShortcuts.clear(KeyCode.delete)
+    expect(windowOwner.assignShortcut([KeyCode.delete], to: .window(.center), recorder: recorder)
+           && windowOwner.windowShortcuts.key(for: .center) == KeyCode.delete, "a window action can take Delete")
+    windowOwner.windowShortcuts.assign(40, to: .center)
+}
 windowRecorder(centerRow)?.onClear?()
 expect(windowOwner.windowShortcuts.key(for: .center) == nil && windowRecorder(centerRow)?.title == "Record Shortcut",
        "✕ clears a window shortcut")
 windowOwner.restoreDefaultWindowShortcuts()
-expect(windowOwner.windowShortcuts == .defaults && windowRecorder(centerRow)?.title == "⇪/", "Restore Defaults brings back ⇪/")
+expect(windowOwner.windowShortcuts == .defaults && windowRecorder(centerRow)?.title == "⇪↓", "Restore Defaults brings back ⇪↓")
 if let data = savedWindowKeys { UserDefaults.standard.set(data, forKey: DefaultsKey.windowShortcuts) }
 else { UserDefaults.standard.removeObject(forKey: DefaultsKey.windowShortcuts) }
 print("PASS: window shortcut list")

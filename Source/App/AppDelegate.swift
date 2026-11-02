@@ -21,7 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var toggleMenuItems: [NSMenuItem] = []
     var loginCheckbox: NSButton?
     var hideCheckbox: NSButton?
-    var accessibilityNoticeRow: NSView?
+    var askBeforeOpeningCheckbox: NSButton?
+    var accessibilityHint: NSTextField?
+    var accessibilityNotice: NSButton?
     var pages: [NSView] = []
     var selectedPage = 0
     let reopenNotification = Notification.Name("local.maxvoid.Clutch.showPreferences")
@@ -47,10 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var windowShortcutList: WindowShortcutListController?
     var showingLaunchConfirmation = false
     var closingPreferencesForAction = false
-    var folderWindow: FolderPanel?
-    var folderList: FolderListController?
     var preferencesFolderList: FolderListController?
-    var folderTable: NSTableView? { folderList?.table }
     var preferencesFolderTable: NSTableView? { preferencesFolderList?.table }
     var folders: [FolderEntry] = []
     let folderDragType = NSPasteboard.PasteboardType("local.maxvoid.Clutch.folder")

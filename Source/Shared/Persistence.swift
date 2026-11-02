@@ -9,6 +9,8 @@ enum DefaultsKey {
     static let windowShortcuts = "WindowShortcuts"
     static let hideStatusBarIcon = "HideStatusBarIcon"
     static let capsMappingRecovery = "CapsMappingRecovery"
+    // Off by default: an app that is not running, or a website with no open tab, asks first.
+    static let skipLaunchConfirmation = "SkipLaunchConfirmation"
 }
 
 enum StoredList {

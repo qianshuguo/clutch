@@ -4,7 +4,7 @@ extension AppDelegate: NSWindowDelegate {
     @objc func closeSettings() { (NSApp.modalWindow ?? NSApp.keyWindow)?.performClose(nil) }
     func hideDockIfIdle() {
         guard window?.isVisible != true, window?.isMiniaturized != true,
-              folderWindow?.isVisible != true, !showingLaunchConfirmation else { return }
+              !showingLaunchConfirmation else { return }
         if NSApp.activationPolicy() != .accessory { NSApp.setActivationPolicy(.accessory) }
     }
     func closePreferencesForAction(keepingApplicationActive: Bool = false) {
@@ -32,11 +32,6 @@ extension AppDelegate: NSWindowDelegate {
         if !closingPreferencesForAction { state.cancelGesture() }
     }
     func windowWillClose(_ notification: Notification) {
-        if let closed = notification.object as? NSWindow, closed === folderWindow {
-            folderWindow = nil; folderList = nil
-            hideDockIfIdle()
-            return
-        }
         guard let closed = notification.object as? NSWindow, closed === window else { return }
         // Drop the settings view tree while the menu-bar utility runs in the background.
         DispatchQueue.main.async { [weak self] in
@@ -45,7 +40,8 @@ extension AppDelegate: NSWindowDelegate {
             self.hideDockIfIdle()
             self.window = nil; self.applicationList = nil; self.preferencesFolderList = nil
             self.toggleButton = nil; self.loginCheckbox = nil; self.hideCheckbox = nil
-            self.accessibilityNoticeRow = nil; self.windowShortcutList = nil; self.websiteList = nil; self.pages = []
+            self.askBeforeOpeningCheckbox = nil
+            self.accessibilityHint = nil; self.accessibilityNotice = nil; self.windowShortcutList = nil; self.websiteList = nil; self.pages = []
         }
     }
 }

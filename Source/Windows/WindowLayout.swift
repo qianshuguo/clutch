@@ -3,7 +3,7 @@ import Foundation
 // through Foundation alone.
 import CoreGraphics
 
-// Caps + arrow / − / = / slash window layouts, modelled on Rectangle's defaults.
+// Caps + arrow / Delete / − / = window layouts, modelled on Rectangle's defaults.
 // Foundation and CoreGraphics only (no AppKit), so the pure keyboard tests can compile it. All rects use
 // Accessibility coordinates: origin at the top-left of the primary display,
 // y growing downward.
@@ -55,16 +55,19 @@ enum WindowCommand: String, CaseIterable {
         default: return symbol
         }
     }
-    // Rectangle-style defaults: arrows, −, = and /.
+    // Rectangle-style defaults: arrows, −, = and, as in Rectangle, Restore on Delete
+    // (Delete undoes what Clutch did). The arrows all place the window, so Center is ↓.
+    // Restore's case keeps its old name, `down`, because it is the key saved shortcuts
+    // are stored under.
     var defaultKey: UInt16 {
         switch self {
         case .left: return 123
         case .right: return 124
         case .up: return 126
-        case .down: return 125
+        case .down: return KeyCode.delete
         case .smaller: return 27
         case .larger: return 24
-        case .center: return 44
+        case .center: return 125
         }
     }
 }
@@ -128,6 +131,8 @@ enum WindowLayout {
     // Make Smaller stops at a quarter of the screen in each direction.
     static let minimumFraction: CGFloat = 0.25
     static let tolerance: CGFloat = 2
+    // A refused size this close to the target is left where it is (see `aligned`).
+    static let alignmentTolerance: CGFloat = 1
 
     static func same(_ a: CGRect, _ b: CGRect) -> Bool {
         abs(a.minX - b.minX) <= tolerance && abs(a.minY - b.minY) <= tolerance &&
@@ -265,13 +270,39 @@ enum WindowLayout {
         }
     }
 
-    // The writes still needed when an app did not land on the target (for example it
-    // clamped the size, or moved the window while resizing): size first, then position.
-    static func corrections(from result: CGRect, to target: CGRect) -> [FrameWrite] {
-        var writes: [FrameWrite] = []
-        if abs(result.width - target.width) > tolerance || abs(result.height - target.height) > tolerance { writes.append(.size) }
-        if abs(result.minX - target.minX) > tolerance || abs(result.minY - target.minY) > tolerance { writes.append(.position) }
-        return writes
+    // An app may refuse the size (terminal grids, minimum or fixed sizes). Like
+    // Rectangle, Clutch accepts the size the app chose instead of asking again, with one
+    // exception: a size written before a move is retried once after it, since the move
+    // can release a limit the old place imposed.
+    static func retriesSize(after writes: [FrameWrite], result: CGRect, target: CGRect) -> Bool {
+        writes.last == .position && missed(result.size, target.size, by: tolerance)
+    }
+
+    // Where a window of `size` (what the app accepted) goes for `target`: on each axis
+    // it keeps to the screen edge the target touches, is centered in the target when
+    // the target touches both edges or neither, and then stays on screen (an oversized
+    // window keeps its top-left visible). Within a point of the target it stays put:
+    // macOS can shorten a window growing onto the Dock by a point, and moving it would
+    // only shift that gap onto a visible edge.
+    static func aligned(_ size: CGSize, to target: CGRect, in screen: CGRect) -> CGRect {
+        func axis(origin: CGFloat, length: CGFloat, actual: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+            var result = origin
+            if abs(actual - length) > alignmentTolerance {
+                let atLower = abs(origin - lower) <= tolerance
+                let atUpper = abs(origin + length - upper) <= tolerance
+                if atLower && !atUpper { result = origin }
+                else if atUpper && !atLower { result = origin + length - actual }
+                else { result = (origin + (length - actual) / 2).rounded() }
+            }
+            return actual > upper - lower ? lower : min(max(result, lower), upper - actual)
+        }
+        return CGRect(x: axis(origin: target.minX, length: target.width, actual: size.width, lower: screen.minX, upper: screen.maxX),
+                      y: axis(origin: target.minY, length: target.height, actual: size.height, lower: screen.minY, upper: screen.maxY),
+                      width: size.width, height: size.height)
+    }
+
+    private static func missed(_ a: CGSize, _ b: CGSize, by limit: CGFloat) -> Bool {
+        abs(a.width - b.width) > limit || abs(a.height - b.height) > limit
     }
 
     static func fits(_ rect: CGRect, in screens: [CGRect]) -> Bool {

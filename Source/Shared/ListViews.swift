@@ -1,63 +1,5 @@
 import Cocoa
 
-final class ListScrollView: NSScrollView {
-    var fitsTableToViewport = false
-    // Insets the clip view from both sides while the vertical scroller stays in the outer margin.
-    var horizontalInset: CGFloat = 0
-    private var fittingTable = false
-
-    override func tile() {
-        super.tile()
-        layoutInsetViewport()
-        guard fitsTableToViewport, !fittingTable,
-              let table = documentView as? NSTableView else { return }
-        // Use the settled clip-view width on first layout as well as when
-        // AppKit changes scroller styles or shows/hides a legacy scroller.
-        let width = contentView.bounds.width
-        guard width > 0 else { return }
-        fittingTable = true
-        defer { fittingTable = false }
-        if table.frame.width != width {
-            table.setFrameSize(NSSize(width: width, height: table.frame.height))
-        }
-        table.sizeLastColumnToFit()
-    }
-
-    private func layoutInsetViewport() {
-        guard horizontalInset > 0 else { return }
-        // A visible legacy scroller keeps its own lane at the trailing edge.
-        let legacyLane = scrollerStyle == .legacy && verticalScroller?.isHidden == false
-        var clip = contentView.frame
-        clip.origin.x += horizontalInset
-        clip.size.width = max(0, clip.width - (legacyLane ? horizontalInset : horizontalInset * 2))
-        contentView.frame = clip
-        guard !legacyLane, let scroller = verticalScroller else { return }
-        // Center the overlay scroller between the selection's trailing edge and the panel edge.
-        let selectionTrailing = clip.maxX - InsetListRowView.selectionInset
-        let center = (selectionTrailing + bounds.maxX) / 2
-        let width = (bounds.maxX - center) * 2
-        scroller.frame = NSRect(x: center - width / 2, y: scroller.frame.minY,
-                                width: width, height: scroller.frame.height)
-    }
-}
-
-// Draws the overlay knob centered in its frame, so the scroller's position is exact.
-final class CenteredOverlayScroller: NSScroller {
-    override class var isCompatibleWithOverlayScrollers: Bool { true }
-    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
-        if scrollerStyle == .legacy { super.drawKnobSlot(in: slotRect, highlight: flag) }
-    }
-    override func drawKnob() {
-        guard scrollerStyle == .overlay else { super.drawKnob(); return }
-        let knob = rect(for: .knob)
-        let width = min(6, bounds.width)
-        let shape = NSRect(x: bounds.midX - width / 2, y: knob.minY + 2,
-                           width: width, height: max(width, knob.height - 4))
-        NSColor.labelColor.withAlphaComponent(0.4).setFill()
-        NSBezierPath(roundedRect: shape, xRadius: width / 2, yRadius: width / 2).fill()
-    }
-}
-
 enum ListGeometry {
     static let shortcutRecorderWidth: CGFloat = 130
     // A label's text starts this far inside its frame; the Shortcut header's text lines
@@ -135,13 +77,6 @@ final class PlainListHeaderView: NSView {
 
 final class InsetListRowView: NSTableRowView {
     static let selectionInset: CGFloat = 6
-    // The Folders picker keeps focus in its search field, so its list never has focus;
-    // its selection still uses the accent color.
-    var alwaysEmphasized = false
-    override var isEmphasized: Bool {
-        get { alwaysEmphasized || super.isEmphasized }
-        set { super.isEmphasized = newValue }
-    }
     override func drawSelection(in dirtyRect: NSRect) {
         let inset = Self.selectionInset
         // The viewport already excludes a visible legacy scrollbar. Hidden overlay
@@ -188,31 +123,19 @@ final class ListActionButton: NSButton {
     @objc private func invoke() { handler() }
 }
 
-// The Caps + Space picker panel, or the Folders page of Preferences (with a header
-// and shortcut fields).
-enum FolderListPresentation {
-    case picker, preferences
-    var headerHeight: CGFloat { self == .preferences ? 28 : 0 }
-    var fitsTableToViewport: Bool { self == .picker }
-    // The standalone panel has no surrounding chrome. With the 6pt selection inset
-    // and the panel's 6pt top allowance, this puts rows 10pt from the side and top edges.
-    var edgeInset: CGFloat { self == .picker ? 4 : 0 }
-}
-
 enum ListSelection {
     static func proposed(_ indexes: IndexSet, in table: NSTableView) -> IndexSet {
         NSApp.currentEvent?.type == .leftMouseDragged ? table.selectedRowIndexes : indexes
     }
     // A right-click selects the clicked row unless it is already part of the selection,
-    // like Finder, so the context menu acts on it. `focus` also makes the table first
-    // responder so the selection shows in the accent color (not for the Folders picker,
-    // whose search field keeps focus). Drawn now: the menu's tracking loop starts before
-    // the next display pass. nil outside the rows.
+    // like Finder, so the context menu acts on it, and makes the table first responder
+    // so the selection shows in the accent color. Drawn now: the menu's tracking loop
+    // starts before the next display pass. nil outside the rows.
     @discardableResult
-    static func selectForMenu(_ event: NSEvent, in table: NSTableView, focus: Bool = true) -> Int? {
+    static func selectForMenu(_ event: NSEvent, in table: NSTableView) -> Int? {
         let row = table.row(at: table.convert(event.locationInWindow, from: nil))
         guard row >= 0 else { return nil }
-        if focus, table.window?.firstResponder !== table { table.window?.makeFirstResponder(table) }
+        if table.window?.firstResponder !== table { table.window?.makeFirstResponder(table) }
         if !table.selectedRowIndexes.contains(row) {
             table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }

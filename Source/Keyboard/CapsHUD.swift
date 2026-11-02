@@ -8,8 +8,7 @@ import Cocoa
 //   (the keys stay on top, the icon and name fade in below);
 // - confirming: after release, when the app is not running, the card animates on to a
 //   smaller icon with "⎋ Cancel" / "↩ Open", and the window becomes a modal panel.
-// Caps held alone shows nothing; the keyboard light shows Caps Lock. Caps + Space hides
-// it as the Folders panel opens.
+// Caps held alone shows nothing; the keyboard light shows Caps Lock.
 extension NSImage {
     // Where the glyph is actually drawn, left to right, in image points: SF Symbol
     // images carry side padding, which made the gap after ⇪ wider than between keys.
@@ -335,7 +334,6 @@ final class CapsOverlay {
     private var app: ShortcutTarget?
     private var keys: String?
     private var shownPath: String?
-    private var hideImmediately = false
     // The card stays on screen after Caps is released (holdCard) until releaseCard or
     // the confirmation takes it over.
     private var holding = false
@@ -373,10 +371,9 @@ final class CapsOverlay {
         self.keys = keys
         setNeedsRender()
     }
-    // No keys to show. `immediately` hides it within this key event (the Folders panel takes over).
-    func hideKeys(immediately: Bool = false) {
-        if immediately { hideImmediately = true }
-        guard keys != nil || immediately else { return }
+    // No keys to show.
+    func hideKeys() {
+        guard keys != nil else { return }
         keys = nil
         setNeedsRender()
     }
@@ -418,12 +415,10 @@ final class CapsOverlay {
     private func render() {
         // The confirmation owns the window until it ends.
         guard mode != .confirming else { return }
-        let immediate = hideImmediately
-        hideImmediately = false
         let wanted: CapsOverlayView.Stage? = app != nil ? .app : (keys != nil ? .keys : nil)
         guard let stage = wanted else {
             guard mode != nil else { return }
-            if immediate { hideNow() } else { hideAfterKeyEvent() }
+            hideAfterKeyEvent()
             return
         }
         if let app = app, app.path != shownPath {

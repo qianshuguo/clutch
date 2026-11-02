@@ -22,8 +22,15 @@ extension AppDelegate {
         toggleButton?.state = wantsEnabled ? .on : .off
         loginCheckbox?.state = loginLaunchEnabled ? .on : .off
         hideCheckbox?.state = UserDefaults.standard.bool(forKey: DefaultsKey.hideStatusBarIcon) ? .on : .off
-        let hideNotice = !(wantsEnabled && tap == nil && !AXIsProcessTrusted())
-        accessibilityNoticeRow?.isHidden = hideNotice
+        askBeforeOpeningCheckbox?.state = asksBeforeOpening ? .on : .off
+        let needsAccessibility = wantsEnabled && tap == nil && !AXIsProcessTrusted()
+        accessibilityNotice?.isHidden = !needsAccessibility
+        accessibilityHint?.isHidden = needsAccessibility
+    }
+    // Whether an app that is not running, or a website with no open tab, asks first in the HUD.
+    var asksBeforeOpening: Bool { !UserDefaults.standard.bool(forKey: DefaultsKey.skipLaunchConfirmation) }
+    @objc func changeAskBeforeOpening(_ sender: NSButton) {
+        UserDefaults.standard.set(sender.state == .off, forKey: DefaultsKey.skipLaunchConfirmation)
     }
     @objc func changeLoginLaunch(_ sender: NSButton) {
         do {

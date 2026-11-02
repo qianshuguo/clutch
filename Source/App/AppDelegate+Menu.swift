@@ -18,7 +18,6 @@ extension AppDelegate: NSMenuItemValidation {
         add("Preferences", #selector(showSettings), ",")
         add("Close Window", #selector(closeSettings), "w", hidden: true)
         add("Find", #selector(findApplication), "f", hidden: true)
-        add("Picker…", #selector(showFolders), "")
         let toggleItem = add("Enable Clutch", #selector(toggle), "s")
         menu.addItem(.separator())
         add("Quit Clutch", #selector(quitApp), "q")
@@ -52,7 +51,7 @@ extension AppDelegate: NSMenuItemValidation {
         if menuItem.action == #selector(findApplication) {
             return window?.isVisible == true && Self.preferenceTabs[selectedPage].id == "apps"
         }
-        if menuItem.action == #selector(closeSettings) { return window?.isVisible == true || folderWindow?.isVisible == true }
+        if menuItem.action == #selector(closeSettings) { return window?.isVisible == true }
         return true
     }
     // Brings the toggle title and Preferences controls up to date with the enabled state.

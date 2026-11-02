@@ -221,14 +221,16 @@ final class KeyRecorder: NSButton {
             saveRecordedKeys()
             return
         }
-        // Caps + Delete takes back the last key pressed.
-        if code == KeyCode.delete {
+        // Caps + Delete takes back the last key pressed. A one-key field (a window
+        // action) has nothing to take back, so there it records Delete.
+        if code == KeyCode.delete && maxKeys > 1 {
             guard !recordedKeys.isEmpty else { NSSound.beep(); return }
             recordedKeys.removeLast()
             showRecordedKeys()
             return
         }
-        guard keyName(code) != nil else { NSSound.beep(); return }
+        // Space is reserved, like Return (and Delete above): it never shows up in the field.
+        guard code != KeyCode.space, keyName(code) != nil else { NSSound.beep(); return }
         guard recordedKeys.count < maxKeys else { NSSound.beep(); return }
         recordedKeys.append(code)
         showRecordedKeys()

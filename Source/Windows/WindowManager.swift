@@ -61,7 +61,8 @@ final class WindowManager {
         queue.async { [self] in
             let current = Self.frame(of: target.window) ?? plan.start
             let result = WindowLayout.same(plan.frame, current) ? current
-                : Self.setFrame(plan.frame, from: current, of: target.window, in: target.application, screens: target.screens)
+                : Self.setFrame(plan.frame, from: current, of: target.window, in: target.application,
+                                 screen: plan.screen, screens: target.screens)
             if let index = memories.firstIndex(where: { CFEqual($0.window, target.window) }) { memories.remove(at: index) }
             if var memory = plan.memory {
                 memory.lastFrame = result
@@ -109,9 +110,9 @@ final class WindowManager {
 
     // Every write is a visible redraw in the target app, so only the attributes that
     // change are written, in an order that never needs an off-screen in-between frame
-    // (see WindowLayout.writes). A follow-up write is made only if the app missed.
+    // (see WindowLayout.writes). If the app chose another size, it is kept and aligned.
     private static func setFrame(_ frame: CGRect, from current: CGRect, of window: AXUIElement,
-                                 in application: AXUIElement, screens: [CGRect]) -> CGRect {
+                                 in application: AXUIElement, screen: CGRect, screens: [CGRect]) -> CGRect {
         let writes = WindowLayout.writes(from: current, to: frame, screens: screens)
         guard !writes.isEmpty else { return current }
         // Apps with enhanced Accessibility UI (Chromium, Electron) animate and drop
@@ -120,12 +121,17 @@ final class WindowManager {
         if enhanced { AXUIElementSetAttributeValue(application, enhancedUserInterface, kCFBooleanFalse) }
         defer { if enhanced { AXUIElementSetAttributeValue(application, enhancedUserInterface, kCFBooleanTrue) } }
         for write in writes { apply(write, frame, to: window) }
-        guard let result = self.frame(of: window) else { return frame }
-        // The full fallback already re-applied the size; otherwise fix what the app missed once.
-        let corrections = writes.count < 3 ? WindowLayout.corrections(from: result, to: frame) : []
-        guard !corrections.isEmpty else { return result }
-        for write in corrections { apply(write, frame, to: window) }
-        return self.frame(of: window) ?? frame
+        guard var result = self.frame(of: window) else { return frame }
+        if WindowLayout.retriesSize(after: writes, result: result, target: frame) {
+            apply(.size, frame, to: window)
+            result = self.frame(of: window) ?? result
+        }
+        // Keep the size the app accepted and move it to the edges the target touches,
+        // so a right half of a terminal ends at the screen's right edge.
+        let placed = WindowLayout.aligned(result.size, to: frame, in: screen)
+        guard !WindowLayout.same(placed, result) else { return result }
+        apply(.position, placed, to: window)
+        return self.frame(of: window) ?? placed
     }
 
     private static func apply(_ write: FrameWrite, _ frame: CGRect, to window: AXUIElement) {

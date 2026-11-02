@@ -182,10 +182,29 @@ extension AppDelegate {
                 running.unhide()
                 running.bringForward()
             case .notFound, .failed:
-                NSWorkspace.shared.open(url)
+                self?.openInBrowser(url)
             case .notPermitted:
                 NSWorkspace.shared.open(url)
                 self?.reportAutomationDenied(browser)
+            }
+        }
+    }
+
+    // Opens a website's address in a new tab. In a running browser Clutch can script,
+    // the tab goes into the window used last, which then comes to the front; otherwise,
+    // or when scripting fails, the system opens the address.
+    func openInBrowser(_ url: URL) {
+        guard let browser = Browser.scriptableDefault(), let running = browser.running else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        browserTabs.open(url, in: browser) { outcome in
+            switch outcome {
+            case .opened:
+                running.unhide()
+                running.bringForward()
+            case .notPermitted, .failed:
+                NSWorkspace.shared.open(url)
             }
         }
     }
@@ -232,16 +251,23 @@ extension AppDelegate {
     }
     // The launch confirmation, with the website's name and the browser's icon:
     // Return opens the address, Escape cancels. Returns whether it opened.
+    // With Ask Before Opening off (General) it opens the address at once.
     @discardableResult
     private func confirmOpening(_ site: WebsiteEntry, url: URL) -> Bool {
         guard !showingLaunchConfirmation else { return false }
+        guard asksBeforeOpening else {
+            capsOverlay.releaseCard()
+            closePreferencesForAction()
+            openInBrowser(url)
+            return true
+        }
         showingLaunchConfirmation = true
         closePreferencesForAction(keepingApplicationActive: true)
         let confirmed = capsOverlay.confirm(appName: site.name, icon: WebsiteEntry.browserIcon)
         showingLaunchConfirmation = false
         hideDockIfIdle()
         guard confirmed else { return false }
-        NSWorkspace.shared.open(url)
+        openInBrowser(url)
         return true
     }
     // Once per browser while Clutch runs: without Automation access every press opens

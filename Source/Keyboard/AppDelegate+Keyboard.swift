@@ -94,26 +94,11 @@ extension AppDelegate {
         guard let recorder = window?.firstResponder as? KeyRecorder, recorder.recording else { return nil }
         return recorder
     }
-    var folderSelectionPanel: FolderPanel? {
-        guard let panel = folderWindow, panel.isKeyWindow, panel.attachedSheet == nil,
-              let table = folderTable else { return nil }
-        // The list or its search field (whose field editor has the focus while typing).
-        let searching = (panel.firstResponder as? NSTextView).map { editor in
-            folderList?.searchField.map { editor.delegate === $0 } ?? false
-        } ?? false
-        guard panel.firstResponder === table || searching else { return nil }
-        return panel
-    }
     enum KeyboardContext {
-        case shortcuts, launchConfirmation, shortcutRecording, folderEditing
-        case folders(FolderPanel)
+        case shortcuts, launchConfirmation, shortcutRecording
     }
     var keyboardContext: KeyboardContext {
         if showingLaunchConfirmation { return .launchConfirmation }
-        if let panel = folderWindow, panel.isKeyWindow {
-            if folderSelectionPanel === panel { return .folders(panel) }
-            return .folderEditing
-        }
         if activeRecorder != nil { return .shortcutRecording }
         return .shortcuts
     }
@@ -166,11 +151,9 @@ extension AppDelegate {
         lastKeyEventUptime = now
         // Context controls only chord actions. Standalone Caps always follows
         // the same state machine and system replay path.
-        var panel: FolderPanel?
         let input: KeyboardState.Input
         switch keyboardContext {
-        case .launchConfirmation, .shortcutRecording, .folderEditing: input = .inactive
-        case .folders(let activePanel): input = .folderPicker; panel = activePanel
+        case .launchConfirmation, .shortcutRecording: input = .inactive
         case .shortcuts: input = .shortcuts
         }
         let shortcutsEnabled = input == .shortcuts
@@ -200,19 +183,14 @@ extension AppDelegate {
                                  repeated: repeated, bound: bound, prefix: prefix,
                                  windowKey: windowKey,
                                  otherModifier: otherModifier, commandModifier: commandModifier,
-                                 input: input,
-                                 // Rows shown, so a search with no matches opens nothing.
-                                 folderCount: folderList?.table.numberOfRows ?? folders.count)
+                                 input: input)
         }
         updateLaunchHint(shortcutsEnabled: shortcutsEnabled)
         // While a field records, Caps is input to the field, not a Caps Lock toggle.
         let recorder = activeRecorder
-        updateCapsHUD(shortcutsEnabled: shortcutsEnabled, recording: recorder != nil, openingFolders: result.showFolders)
+        updateCapsHUD(shortcutsEnabled: shortcutsEnabled, recording: recorder != nil)
         if routeCapsRecording(type, key: key, to: recorder, capsWasHeld: capsWasHeld, repeated: repeated, flags: event.flags) {
             return nil
-        }
-        if result.showFolders {
-            performOnMainRunLoop { [weak self] in self?.showFolders() }
         }
         if result.tap && recorder == nil {
             performOnMainRunLoop { [weak self] in
@@ -237,36 +215,16 @@ extension AppDelegate {
             // a window shortcut: drop the preview.
             performOnMainRunLoop { [weak self] in self?.cancelWindowPreview() }
         }
-        if panel != nil, key == KeyCode.hyper, type == .keyDown, !capsWasHeld {
-            performOnMainRunLoop { [weak self] in self?.folderList?.resetCapsJump() }
-        }
-        if let panel = panel, result.folderNumber != nil || result.folderJump != nil || result.openFolderSelection {
-            performOnMainRunLoop { [weak self, weak panel] in
-                guard let self = self, let panel = panel, self.folderSelectionPanel === panel else { return }
-                if let number = result.folderNumber {
-                    self.folderList?.resetCapsJump()
-                    panel.selectNumber?(number)
-                }
-                if let key = result.folderJump { self.folderList?.jumpToFolder(key: key, time: now) }
-                if result.openFolderSelection { panel.openSelection?() }
-            }
-        }
-        // Other keys go to the focused view's native navigation and editing commands.
-        if result.stripCommandModifier { event.flags.remove(.maskCommand) }
         return result.swallow ? nil : Unmanaged.passUnretained(event)
     }
     // Called for every key event after the launch hint. One HUD window, resizing: the
     // keys pressed so far ("⇪ M W") with "No matching app"; or, when they select an app,
     // grown into the app card (updateLaunchHint) with the keys on top. Caps held
-    // alone shows nothing: the keyboard light shows Caps Lock. Caps + Space hides the
-    // pill at once as the Folders panel opens.
-    func updateCapsHUD(shortcutsEnabled: Bool, recording: Bool, openingFolders: Bool) {
-        // The launch confirmation needs no Caps hint, the open Folders panel has its
-        // search field where the pill would be, and a window action shows its own preview.
-        let hidden = recording || showingLaunchConfirmation || folderWindow?.isVisible == true || state.windowGesture
-        if openingFolders {
-            capsOverlay.hideKeys(immediately: true)
-        } else if !hidden && shortcutsEnabled && state.showsKeyHint {
+    // alone shows nothing: the keyboard light shows Caps Lock.
+    func updateCapsHUD(shortcutsEnabled: Bool, recording: Bool) {
+        // The launch confirmation needs no Caps hint, and a window action shows its own preview.
+        let hidden = recording || showingLaunchConfirmation || state.windowGesture
+        if !hidden && shortcutsEnabled && state.showsKeyHint {
             // The overlay updates its one window after the key event, together with
             // the app from updateLaunchHint.
             capsOverlay.showKeys(state.pressedKeys.map { keyName($0) ?? "?" }.joined(separator: " "))
