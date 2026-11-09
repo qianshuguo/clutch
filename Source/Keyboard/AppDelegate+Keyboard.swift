@@ -94,14 +94,6 @@ extension AppDelegate {
         guard let recorder = window?.firstResponder as? KeyRecorder, recorder.recording else { return nil }
         return recorder
     }
-    enum KeyboardContext {
-        case shortcuts, launchConfirmation, shortcutRecording
-    }
-    var keyboardContext: KeyboardContext {
-        if showingLaunchConfirmation { return .launchConfirmation }
-        if activeRecorder != nil { return .shortcutRecording }
-        return .shortcuts
-    }
     static let hiddenInputGap: TimeInterval = 0.3
     // Hardware key state, independent of what the tap was allowed to see.
     static func isKeyDown(_ key: UInt16) -> Bool {
@@ -150,12 +142,10 @@ extension AppDelegate {
         }
         lastKeyEventUptime = now
         // Context controls only chord actions. Standalone Caps always follows
-        // the same state machine and system replay path.
-        let input: KeyboardState.Input
-        switch keyboardContext {
-        case .launchConfirmation, .shortcutRecording: input = .inactive
-        case .shortcuts: input = .shortcuts
-        }
+        // the same state machine and system replay path. The launch confirmation and
+        // a recording field take keys as their own input.
+        let recorder = activeRecorder
+        let input: KeyboardState.Input = showingLaunchConfirmation || recorder != nil ? .inactive : .shortcuts
         let shortcutsEnabled = input == .shortcuts
         let otherModifier = !event.flags.intersection([.maskControl, .maskAlternate]).isEmpty
         let commandModifier = event.flags.contains(.maskCommand)
@@ -187,7 +177,6 @@ extension AppDelegate {
         }
         updateLaunchHint(shortcutsEnabled: shortcutsEnabled)
         // While a field records, Caps is input to the field, not a Caps Lock toggle.
-        let recorder = activeRecorder
         updateCapsHUD(shortcutsEnabled: shortcutsEnabled, recording: recorder != nil)
         if routeCapsRecording(type, key: key, to: recorder, capsWasHeld: capsWasHeld, repeated: repeated, flags: event.flags) {
             return nil

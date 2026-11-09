@@ -53,8 +53,12 @@ extension AppDelegate {
         windowShortcuts.save()
         windowShortcutList?.table.reloadData()
     }
-    // Bottom bar matching App List's, with Restore Defaults in place of + / −.
-    func addWindowShortcutControls(to content: NSView, width: CGFloat) {
+    // The App List layout, with Restore Defaults in place of + / − in the bottom bar.
+    func addWindowsPage(to content: NSView) {
+        let list = WindowShortcutListController(owner: self)
+        windowShortcutList = list
+        addList(list.table, to: content, title: "Action")
+        let width = content.bounds.width
         addListBottomDivider(to: content, width: width)
         let button = ListActionButton(action: { [weak self] in self?.restoreDefaultWindowShortcuts() })
         button.title = "Restore Defaults"

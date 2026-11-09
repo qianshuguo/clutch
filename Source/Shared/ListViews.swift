@@ -150,6 +150,54 @@ enum ListSelection {
         for row in valid.reversed() { items.remove(at: row) }
         return true
     }
+    // After a removal, selects the row that took the first removed row's place.
+    static func selectAfterRemoval(at firstRow: Int, in table: NSTableView) {
+        let rows = table.numberOfRows
+        table.selectRowIndexes(rows == 0 ? IndexSet() : IndexSet(integer: min(firstRow, rows - 1)),
+                               byExtendingSelection: false)
+    }
+}
+
+// The Folders and Websites tables: Return opens the selection, Escape closes the
+// window, and the context menu has Open, Edit… (for one entry) and, when
+// `revealSelection` is set, Reveal in Finder. Right-clicking an entry selects it
+// first, like Finder.
+final class EntryTableView: NSTableView {
+    var openSelection: (() -> Void)?
+    var editSelection: (() -> Void)?
+    var revealSelection: (() -> Void)?
+    override func rightMouseDown(with event: NSEvent) {
+        ListSelection.selectForMenu(event, in: self)
+        super.rightMouseDown(with: event)
+    }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard ListSelection.selectForMenu(event, in: self) != nil else { return nil }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let open = NSMenuItem(title: "Open", action: #selector(openSelected), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+        let edit = NSMenuItem(title: "Edit…", action: #selector(editSelected), keyEquivalent: "")
+        edit.target = self
+        edit.isEnabled = selectedRowIndexes.count == 1
+        menu.addItem(edit)
+        if revealSelection != nil {
+            menu.addItem(.separator())
+            let reveal = NSMenuItem(title: "Reveal in Finder", action: #selector(revealSelected), keyEquivalent: "")
+            reveal.target = self
+            menu.addItem(reveal)
+        }
+        return menu
+    }
+    @objc func openSelected() { openSelection?() }
+    @objc func editSelected() { editSelection?() }
+    @objc func revealSelected() { revealSelection?() }
+    override func flagsChanged(with event: NSEvent) { window?.flagsChanged(with: event) }
+    override func keyDown(with event: NSEvent) {
+        if KeyCode.isReturn(event.keyCode) { openSelection?(); return }
+        if event.keyCode == KeyCode.escape { window?.cancelOperation(nil); return }
+        super.keyDown(with: event)
+    }
 }
 
 // The native round "?" button. Clicking it shows a small two-column popover below

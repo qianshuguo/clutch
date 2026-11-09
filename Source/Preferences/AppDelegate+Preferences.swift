@@ -1,11 +1,6 @@
 import Cocoa
 
 extension AppDelegate: NSToolbarDelegate {
-    func label(_ text: String, frame: NSRect, size: CGFloat = 13) -> NSTextField {
-        let field = NSTextField(labelWithString: text)
-        field.frame = frame; field.font = .systemFont(ofSize: size); field.lineBreakMode = .byWordWrapping
-        return field
-    }
     func createWindow() {
         window = PreferencesWindow(contentRect: NSRect(origin: .zero, size: Self.preferenceSize),
                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -68,7 +63,9 @@ extension AppDelegate: NSToolbarDelegate {
         hideCheckbox = NSButton(checkboxWithTitle: "Hide Status Bar Icon", target: self, action: #selector(changeStatusIcon))
         // Both states share one fixed line, so permission changes never move the form.
         let permissionLine = NSView()
-        let hint = label("Use Caps Lock shortcuts.", frame: .zero, size: 11)
+        let hint = NSTextField(labelWithString: "Use Caps Lock shortcuts.")
+        hint.font = .systemFont(ofSize: 11)
+        hint.lineBreakMode = .byWordWrapping
         hint.textColor = .secondaryLabelColor
         accessibilityHint = hint
         for view in [hint, notice] {
@@ -111,43 +108,31 @@ extension AppDelegate: NSToolbarDelegate {
             divider.widthAnchor.constraint(equalTo: column.widthAnchor)
         ])
 
-        let apps = pages[1]
-        let scroll = makeListScroll(size: Self.preferenceSize, headerHeight: 28)
-        let applicationList = ApplicationListController(owner: self)
-        self.applicationList = applicationList
-        let table = applicationList.table
-        configureList(table, width: Self.preferenceSize.width, title: "Application")
-        scroll.documentView = table
-        apps.addSubview(scroll)
-        addListHeader(to: apps, table: table, size: Self.preferenceSize)
-        addListControls(to: apps, width: Self.preferenceSize.width,
+        addApplicationsPage(to: pages[1])
+        addFoldersPage(to: pages[2])
+        addWebsitesPage(to: pages[3])
+        addWindowsPage(to: pages[4])
+        syncPreferences()
+        selectPage(selectedPage)
+        return content
+    }
+    func addApplicationsPage(to page: NSView) {
+        let list = ApplicationListController(owner: self)
+        applicationList = list
+        let scroll = addList(list.table, to: page, title: "Application")
+        let width = page.bounds.width
+        addListControls(to: page, width: width,
                         add: { [weak self] in self?.addBinding() },
                         remove: { [weak self] in self?.removeBinding() }, itemName: "Application")
-        let appsHelp = addListHelp([
+        let help = addListHelp([
             ("Caps + key, release Caps", "Switch to the app"),
             ("Set a shortcut", "Hold ⇪ + up to 3 keys"),
             ("Press again", "Next window of that app"),
             ("Not running", "Asks first; Return opens it"),
             ("⌘F", "Search by app name"),
             ("Type in the list", "Jump to an app by name")
-        ], to: apps, trailing: Self.preferenceSize.width - 12)
-        addApplicationSearch(to: apps, list: applicationList, scroll: scroll, before: appsHelp)
-        let folderContent = makeFoldersContent(size: Self.preferenceSize)
-        preferencesFolderList = folderContent.controller
-        pages[2].addSubview(folderContent.content)
-        addWebsitesPage(to: pages[3])
-        let windowsPage = pages[4]
-        let windowScroll = makeListScroll(size: Self.preferenceSize, headerHeight: 28)
-        let windowShortcutList = WindowShortcutListController(owner: self)
-        self.windowShortcutList = windowShortcutList
-        configureList(windowShortcutList.table, width: Self.preferenceSize.width, title: "Action")
-        windowScroll.documentView = windowShortcutList.table
-        windowsPage.addSubview(windowScroll)
-        addListHeader(to: windowsPage, table: windowShortcutList.table, size: Self.preferenceSize)
-        addWindowShortcutControls(to: windowsPage, width: Self.preferenceSize.width)
-        syncPreferences()
-        selectPage(selectedPage)
-        return content
+        ], to: page, trailing: width - 12)
+        addApplicationSearch(to: page, list: list, scroll: scroll, before: help)
     }
     // A small search field in the App List bottom bar, ending just before the ? button,
     // plus the notice shown over the list when nothing matches.
@@ -170,14 +155,8 @@ extension AppDelegate: NSToolbarDelegate {
         page.addSubview(search)
         list.searchField = search
 
-        let empty = NSTextField(labelWithString: "No Matching Applications")
-        empty.font = .systemFont(ofSize: 13)
-        empty.textColor = .secondaryLabelColor
-        empty.alignment = .center
-        empty.frame = NSRect(x: 0, y: scroll.frame.midY - 9, width: scroll.frame.width, height: 18)
-        empty.autoresizingMask = [.width, .minYMargin, .maxYMargin]
+        let empty = addEmptyListLabel("No Matching Applications", over: scroll, to: page)
         empty.isHidden = true
-        page.addSubview(empty)
         list.emptyLabel = empty
     }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -208,6 +187,6 @@ extension AppDelegate: NSToolbarDelegate {
         selectedPage = index
         for (position, page) in pages.enumerated() { page.isHidden = position != index }
         window?.toolbar?.selectedItemIdentifier = NSToolbarItem.Identifier(Self.preferenceTabs[index].id)
-        if Self.preferenceTabs[index].id == "folders" { window?.makeFirstResponder(preferencesFolderTable) }
+        if Self.preferenceTabs[index].id == "folders" { window?.makeFirstResponder(preferencesFolderList?.table) }
     }
 }

@@ -4,7 +4,7 @@ import Cocoa
 // decides which selection to use. Rows are `owner.folders` in order.
 final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     unowned let owner: AppDelegate
-    let table = FolderTableView()
+    let table = EntryTableView()
 
     init(owner: AppDelegate) {
         self.owner = owner

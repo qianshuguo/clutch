@@ -67,9 +67,10 @@ owner.state.reset()
 print("PASS: Caps system-key replay encoding, matching release, event-tap bypass")
 owner.bindings = [AppShortcut(keys: [3], name: "Example", path: "/Applications/Example.app", bundleID: nil)]
 owner.folders = [FolderEntry(name: "First", path: "/tmp"), FolderEntry(name: "Second", path: "/")]
-let preferences = owner.makeFoldersContent(size: AppDelegate.preferenceSize)
+let foldersPage = NSView(frame: NSRect(origin: .zero, size: AppDelegate.preferenceSize))
 // As in Preferences, so saving the folders reloads this table.
-owner.preferencesFolderList = preferences.controller
+owner.addFoldersPage(to: foldersPage)
+let preferences = (content: foldersPage, controller: owner.preferencesFolderList!)
 let preferencesTable = preferences.controller.table
 preferencesTable.reloadData()
 expect(preferencesTable.dataSource === preferences.controller, "preferences retains its own table data source")
@@ -295,7 +296,7 @@ let button = ListActionButton { invoked += 1 }
 button.performClick(nil)
 expect(invoked == 1, "list buttons invoke their explicit callback once")
 weak var releasedController: FolderListController?
-var retainedTable: FolderTableView?
+var retainedTable: EntryTableView?
 do {
     let controller = FolderListController(owner: owner)
     releasedController = controller

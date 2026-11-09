@@ -74,9 +74,7 @@ final class ApplicationWindowCycle {
         let focused = AXQuery.element(application, kAXFocusedWindowAttribute)
         guard let next = order.next(processID: processID, available: available, focused: focused, cycle: cycle,
                                     frontWhenUnfocused: frontWhenUnfocused, equals: { CFEqual($0, $1) }) else { return true }
-        guard AXUIElementPerformAction(next, kAXRaiseAction as CFString) == .success else { return true }
-        AXUIElementSetAttributeValue(next, kAXMainAttribute as CFString, kCFBooleanTrue)
-        AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, next)
+        AXQuery.raise(next, in: application)
         return true
     }
 }
@@ -170,12 +168,12 @@ extension AppDelegate {
         let taken: [ShortcutEntry] = same + longer + action
         return (taken.map { $0.owner }, taken.map { $0.name }, inUse)
     }
-    // `keys` are pressed in order while Caps is held: 1 to AppShortcut.maxKeys of them
+    // `keys` are pressed in order while Caps is held: 1 to KeyboardState.maxShortcutKeys of them
     // (⇪M, ⇪M W, ⇪M W E), one for a window action. Shortcuts run when Caps is released,
     // so ⇪M, ⇪M W and ⇪M W E can belong to different owners. Taking a shortcut asks
     // first and names who loses it.
     func assignShortcut(_ keys: [UInt16], to owner: ShortcutOwner, recorder: KeyRecorder) -> Bool {
-        guard !keys.isEmpty, keys.count <= (owner.isWindow ? 1 : AppShortcut.maxKeys),
+        guard !keys.isEmpty, keys.count <= (owner.isWindow ? 1 : KeyboardState.maxShortcutKeys),
               let name = allShortcuts.first(where: { $0.owner == owner })?.name else { return false }
         guard keys.allSatisfy({ shortcutKeyAvailable($0, for: owner) }) else { return false }
         let conflicts = shortcutConflicts(keys, for: owner)
@@ -278,16 +276,12 @@ extension AppDelegate {
     // Falls back to the default list when nothing is saved. Unreadable saved data is
     // preserved and reported by the thrown error instead of being silently replaced.
     func loadBindings() throws {
-        do {
-            bindings = try StoredList.load([AppShortcut].self, forKey: DefaultsKey.shortcuts,
-                                           description: "app shortcuts") ?? Self.defaultShortcuts
-        } catch {
-            bindings = Self.defaultShortcuts
-            throw error
-        }
+        bindings = Self.defaultShortcuts
+        if let saved = try StoredList.load([AppShortcut].self, forKey: DefaultsKey.shortcuts,
+                                           description: "app shortcuts") { bindings = saved }
     }
     func saveBindings() {
-        if let data = try? JSONEncoder().encode(bindings) { UserDefaults.standard.set(data, forKey: DefaultsKey.shortcuts) }
+        StoredList.save(bindings, forKey: DefaultsKey.shortcuts)
         applicationList?.reload()
     }
     @objc func addBinding() {
@@ -316,9 +310,7 @@ extension AppDelegate {
         guard let list = applicationList, let firstRow = list.table.selectedRowIndexes.first else { return }
         guard ListSelection.remove(list.selectedBindingIndices, from: &bindings) else { return }
         saveBindings()
-        let rows = list.table.numberOfRows
-        list.table.selectRowIndexes(rows == 0 ? IndexSet() : IndexSet(integer: min(firstRow, rows - 1)),
-                                    byExtendingSelection: false)
+        ListSelection.selectAfterRemoval(at: firstRow, in: list.table)
     }
     // Command-F on the App List page.
     @objc func findApplication() {
@@ -358,12 +350,7 @@ extension AppDelegate {
             return
         }
         if asksBeforeOpening {
-            showingLaunchConfirmation = true
-            closePreferencesForAction(keepingApplicationActive: true)
-            let confirmed = capsOverlay.confirm(appName: binding.name, icon: workspace.icon(forFile: target.path))
-            showingLaunchConfirmation = false
-            hideDockIfIdle()
-            guard confirmed else { return }
+            guard askToOpen(binding.name, icon: workspace.icon(forFile: target.path)) else { return }
         } else {
             // Ask Before Opening is off (General): open at once, like a running app.
             closePreferencesForAction()
@@ -375,6 +362,16 @@ extension AppDelegate {
                 else { app?.unhide(); app?.bringForward(allWindows: true) }
             }
         }
+    }
+    // The launch confirmation for an app or website that is not open yet, in the Caps
+    // HUD, taking over from Preferences. Returns whether to open it.
+    func askToOpen(_ name: String, icon: NSImage) -> Bool {
+        showingLaunchConfirmation = true
+        closePreferencesForAction(keepingApplicationActive: true)
+        let confirmed = capsOverlay.confirm(appName: name, icon: icon)
+        showingLaunchConfirmation = false
+        hideDockIfIdle()
+        return confirmed
     }
     // NSRunningApplication.activate never sends the reopen Apple Event, so an app
     // whose windows are all closed or minimized becomes frontmost with nothing on

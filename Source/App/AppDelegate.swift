@@ -50,7 +50,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var showingLaunchConfirmation = false
     var closingPreferencesForAction = false
     var preferencesFolderList: FolderListController?
-    var preferencesFolderTable: NSTableView? { preferencesFolderList?.table }
     var folders: [FolderEntry] = []
     let folderDragType = NSPasteboard.PasteboardType("local.maxvoid.Clutch.folder")
     var websites: [WebsiteEntry] = []

@@ -24,7 +24,7 @@ final class KeyRecorder: NSButton {
     var onKeys: (([UInt16]) -> Bool)?
     // Called by the ✕; without it the field shows no ✕.
     var onClear: (() -> Void)? { didSet { needsDisplay = true } }
-    // AppShortcut.maxKeys for App List (⇪M W E), 1 for window actions.
+    // KeyboardState.maxShortcutKeys for App List (⇪M W E), 1 for window actions.
     var maxKeys = 1
     // False while Clutch cannot see Caps (disabled, or no Accessibility access).
     var capsAvailable: (() -> Bool)?

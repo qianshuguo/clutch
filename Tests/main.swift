@@ -576,7 +576,6 @@ for missingMask in 0..<16 {
         let valid = batchFolders.indices.filter { missingMask & (1 << $0) == 0 }
         let successful = valid.filter { failedMask & (1 << $0) == 0 }
         expect(attempted == valid.map { batchFolders[$0].path }, "batch attempts every valid folder in selection order despite failures")
-        expect(result.openedCount == successful.count, "batch counts successful opens")
         expect(result.failures.count == batchFolders.count - successful.count, "batch collects every failure once")
         for index in batchFolders.indices where !successful.contains(index) {
             expect(result.failures.contains { $0.contains(batchFolders[index].path) }, "failure identifies the folder path")
@@ -584,7 +583,7 @@ for missingMask in 0..<16 {
     }
 }
 let emptyBatch = FolderBatchOpen.run([], isDirectory: { _ in fatalError("empty selection must not access disk") }, open: { _ in fatalError("empty selection must not open anything") })
-expect(emptyBatch.openedCount == 0 && emptyBatch.failures.isEmpty, "empty batch is a no-op")
+expect(emptyBatch.failures.isEmpty, "empty batch is a no-op")
 print("PASS: 256 batch-open failure combinations, selection order, aggregated errors, empty selection")
 
 // The same standalone rule applies to normal apps and focused input (recording,
@@ -881,6 +880,12 @@ var restorePlan = WindowPlan(start: CGRect(x: 0, y: 25, width: 720, height: 875)
                              memory: WindowMemory(restoreFrame: planStart, lastAction: .leftHalf(step: 0), lastFrame: CGRect(x: 0, y: 25, width: 720, height: 875)))
 restorePlan.apply(.down)
 expect(restorePlan.applied && restorePlan.frame == planStart && restorePlan.memory == nil, "Restore previews the frame before the first layout")
+expect(restorePlan.restores, "a Restore plan is applied without aligning or keeping it on screen")
+let offScreenStart = CGRect(x: -300, y: 25, width: 800, height: 500)
+var offScreenRestore = WindowPlan(start: CGRect(x: 0, y: 25, width: 720, height: 875), screen: planScreen,
+                                  memory: WindowMemory(restoreFrame: offScreenStart, lastAction: .leftHalf(step: 0), lastFrame: CGRect(x: 0, y: 25, width: 720, height: 875)))
+offScreenRestore.apply(.down)
+expect(offScreenRestore.frame == offScreenStart, "Restore returns a window partly off-screen to exactly where it was")
 var heightPlan = WindowPlan(start: planStart, screen: planScreen, memory: nil)
 heightPlan.apply(.up)
 expect(heightPlan.frame == CGRect(x: 320, y: 25, width: 800, height: 875), "↑ previews fill height")
@@ -900,6 +905,7 @@ expect(sizePlan.frame == CGRect(x: 305, y: 198, width: 830, height: 530), "− s
 var nothing = WindowPlan(start: planStart, screen: planScreen, memory: nil)
 nothing.apply(.down)
 expect(!nothing.applied, "Restore without a restore point previews and applies nothing")
+expect(!nothing.restores && !heightPlan.restores && !leftThenUp.restores, "only an applied Restore skips alignment")
 let remembered = WindowMemory(restoreFrame: planStart, lastAction: .leftHalf(step: 0), lastFrame: CGRect(x: 0, y: 25, width: 720, height: 875))
 var continued = WindowPlan(start: remembered.lastFrame, screen: planScreen, memory: remembered)
 continued.apply(.left)

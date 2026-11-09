@@ -8,9 +8,6 @@ struct AppShortcut: Codable, Equatable, KeyShortcut {
     var path: String
     var bundleID: String?
 
-    // Keys one shortcut may use after Caps.
-    static let maxKeys = KeyboardState.maxShortcutKeys
-
     init(keys: [UInt16] = [], name: String, path: String, bundleID: String?) {
         self.keys = keys; self.name = name; self.path = path; self.bundleID = bundleID
     }

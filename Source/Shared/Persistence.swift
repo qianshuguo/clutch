@@ -28,4 +28,7 @@ enum StoredList {
             throw ToolError(message: "Saved \(description) could not be read, so Clutch started without them. The original data was kept in its preferences under “\(backupKey)”.")
         }
     }
+    static func save<T: Encodable>(_ list: T, forKey key: String, defaults: UserDefaults = .standard) {
+        if let data = try? JSONEncoder().encode(list) { defaults.set(data, forKey: key) }
+    }
 }

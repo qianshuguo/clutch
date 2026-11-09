@@ -57,7 +57,6 @@ enum FolderOrder {
 // Try every selected folder and report failures together after the batch finishes.
 enum FolderBatchOpen {
     struct Result {
-        var openedCount = 0
         var failures: [String] = []
     }
     static func run(_ folders: [FolderEntry], isDirectory: (String) -> Bool,
@@ -68,8 +67,7 @@ enum FolderBatchOpen {
                 result.failures.append("Could not find \(folder.name) (\(folder.path)). Add the folder again.")
                 continue
             }
-            if open(folder) { result.openedCount += 1 }
-            else { result.failures.append("Could not open \(folder.name) (\(folder.path)).") }
+            if !open(folder) { result.failures.append("Could not open \(folder.name) (\(folder.path)).") }
         }
         return result
     }

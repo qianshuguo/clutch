@@ -6,7 +6,7 @@ import Cocoa
 // websites; double-click or Edit… in the context menu changes the name and URL. Retained by AppDelegate with the preferences view tree.
 final class WebsiteListController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     unowned let owner: AppDelegate
-    let table = WebsiteTableView()
+    let table = EntryTableView()
     weak var emptyLabel: NSTextField?
     // Every row shows the default browser's icon: that is where the page opens.
     // Looked up once per reload, not for every row.
@@ -88,35 +88,5 @@ final class WebsiteListController: NSObject, NSTableViewDataSource, NSTableViewD
         owner.addShortcutRecorder(to: cell, width: cellWidth, for: .website(url: site.url),
                                   keys: site.keys, table: tableView, row: row)
         return cell
-    }
-}
-
-// The Websites table: Return opens the selection, and the context menu has Open and
-// Edit…, like Folders. Right-clicking a website selects it first, like Finder.
-final class WebsiteTableView: NSTableView {
-    var openSelection: (() -> Void)?
-    var editSelection: (() -> Void)?
-    override func rightMouseDown(with event: NSEvent) {
-        ListSelection.selectForMenu(event, in: self)
-        super.rightMouseDown(with: event)
-    }
-    override func menu(for event: NSEvent) -> NSMenu? {
-        guard ListSelection.selectForMenu(event, in: self) != nil else { return nil }
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        let open = NSMenuItem(title: "Open", action: #selector(openSelected), keyEquivalent: "")
-        open.target = self
-        menu.addItem(open)
-        let edit = NSMenuItem(title: "Edit…", action: #selector(editSelected), keyEquivalent: "")
-        edit.target = self
-        edit.isEnabled = selectedRowIndexes.count == 1
-        menu.addItem(edit)
-        return menu
-    }
-    @objc func openSelected() { openSelection?() }
-    @objc func editSelected() { editSelection?() }
-    override func keyDown(with event: NSEvent) {
-        if KeyCode.isReturn(event.keyCode) { openSelection?(); return }
-        super.keyDown(with: event)
     }
 }

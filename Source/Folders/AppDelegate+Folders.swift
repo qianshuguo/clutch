@@ -2,21 +2,16 @@ import Cocoa
 
 extension AppDelegate {
     // The Folders page of Preferences: the list with a header and shortcut fields.
-    func makeFoldersContent(size: NSSize) -> (content: NSView, controller: FolderListController) {
-        let content = NSView(frame: NSRect(origin: .zero, size: size))
-        content.autoresizingMask = [.width, .height]
-        let scroll = makeListScroll(size: size, headerHeight: 28)
+    func addFoldersPage(to page: NSView) {
+        let width = page.bounds.width
         let controller = FolderListController(owner: self)
+        preferencesFolderList = controller
         let list = controller.table
-        configureList(list, width: size.width, title: "Name")
         list.allowsMultipleSelection = true
         list.registerForDraggedTypes([folderDragType])
         list.setDraggingSourceOperationMask(.move, forLocal: true)
-        scroll.documentView = list
-        scroll.tile()
-        content.addSubview(scroll)
-        addListHeader(to: content, table: list, size: size)
-        addListControls(to: content, width: size.width,
+        addList(list, to: page, title: "Name")
+        addListControls(to: page, width: width,
                         add: { [weak self, weak controller] in
                             guard let controller = controller else { return }
                             self?.addFolders(to: controller)
@@ -30,8 +25,7 @@ extension AppDelegate {
             ("Hover a folder", "Show its path"),
             ("Double-click a folder", "Edit its name and location"),
             ("Right-click a folder", "Open, edit or reveal it")
-        ], to: content, trailing: size.width - 12)
-        return (content, controller)
+        ], to: page, trailing: width - 12)
     }
     // First-run Folders list, in order. Folders that do not exist are skipped.
     static var defaultFolders: [FolderEntry] {
@@ -44,17 +38,13 @@ extension AppDelegate {
     // Falls back to the default list when nothing is saved. Unreadable saved data is
     // preserved and reported by the thrown error instead of being silently replaced.
     func loadFolders() throws {
-        do {
-            folders = try StoredList.load([FolderEntry].self, forKey: DefaultsKey.folders,
-                                          description: "folders") ?? Self.defaultFolders
-        } catch {
-            folders = Self.defaultFolders
-            throw error
-        }
+        folders = Self.defaultFolders
+        if let saved = try StoredList.load([FolderEntry].self, forKey: DefaultsKey.folders,
+                                           description: "folders") { folders = saved }
     }
     func saveFolders() {
-        if let data = try? JSONEncoder().encode(folders) { UserDefaults.standard.set(data, forKey: DefaultsKey.folders) }
-        preferencesFolderTable?.reloadData()
+        StoredList.save(folders, forKey: DefaultsKey.folders)
+        preferencesFolderList?.table.reloadData()
     }
     // +: the sheet Websites shares (showFieldSheet), with Name and Location; Choose…
     // picks the folder. An empty name uses the folder's own name. A folder already listed
@@ -77,22 +67,25 @@ extension AppDelegate {
     // The name Finder shows for a typed location ("~/Documents" → "Documents"), or "" when
     // it is not a folder.
     static func folderDisplayName(forLocation location: String) -> String {
+        existingFolder(atLocation: location).map(FileManager.default.displayName(atPath:)) ?? ""
+    }
+    // Typed or chosen text as a folder path, "~" expanded and standardized; nil when it
+    // is not an existing folder.
+    static func existingFolder(atLocation location: String) -> String? {
         let trimmed = location.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
+        guard !trimmed.isEmpty else { return nil }
         let path = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath).standardizedFileURL.path
-        guard FileManager.default.isDirectory(atPath: path) else { return "" }
-        return FileManager.default.displayName(atPath: path)
+        return FileManager.default.isDirectory(atPath: path) ? path : nil
     }
     func addFolder(name text: String, location: String, to controller: FolderListController) {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let path = folderPath(for: location) else { return }
         let targetTable = controller.table
         let index: Int
         if let existing = folders.firstIndex(where: { $0.path == path }) {
             index = existing
         } else {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             var folder = FolderEntry(name: trimmed, path: path)
             if trimmed.isEmpty { folder.name = folder.originalName }
             folders.append(folder)
@@ -102,31 +95,21 @@ extension AppDelegate {
         targetTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         targetTable.scrollRowToVisible(index)
     }
-    // Typed or chosen text as a folder path: "~" expanded, standardized, and it must be
-    // an existing folder; otherwise reported, and nil.
+    // existingFolder(atLocation:), with what is wrong reported when it is nil.
     func folderPath(for location: String) -> String? {
+        if let path = Self.existingFolder(atLocation: location) { return path }
         let trimmed = location.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            showError(ToolError(message: "Choose a folder, or type its location, such as ~/Documents."))
-            return nil
-        }
-        let path = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath).standardizedFileURL.path
-        guard FileManager.default.isDirectory(atPath: path) else {
-            showError(ToolError(message: "“\(trimmed)” is not a folder."))
-            return nil
-        }
-        return path
+        showError(ToolError(message: trimmed.isEmpty ? "Choose a folder, or type its location, such as ~/Documents."
+                                                     : "“\(trimmed)” is not a folder."))
+        return nil
     }
     // Removes the selected folders and selects the row that took the first one's place.
     func removeFolders(from controller: FolderListController) {
         let targetTable = controller.table
-        let firstRow = targetTable.selectedRowIndexes.first
-        guard ListSelection.remove(targetTable.selectedRowIndexes, from: &folders) else { return }
+        guard let firstRow = targetTable.selectedRowIndexes.first,
+              ListSelection.remove(targetTable.selectedRowIndexes, from: &folders) else { return }
         saveFolders()
-        let rows = targetTable.numberOfRows
-        if let first = firstRow, rows > 0 {
-            targetTable.selectRowIndexes(IndexSet(integer: min(first, rows - 1)), byExtendingSelection: false)
-        }
+        ListSelection.selectAfterRemoval(at: firstRow, in: targetTable)
     }
     // `selection`: indexes into `folders`.
     func openSelectedFolders(_ selection: IndexSet, in targetTable: NSTableView) {

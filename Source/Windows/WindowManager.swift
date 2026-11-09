@@ -20,6 +20,29 @@ enum AXQuery {
         guard let found = value(element, attribute), CFGetTypeID(found) == AXUIElementGetTypeID() else { return nil }
         return (found as! AXUIElement)
     }
+    // The window keyboard input goes to, or the main window when none has focus.
+    static func focusedWindow(of application: AXUIElement) -> AXUIElement? {
+        element(application, kAXFocusedWindowAttribute) ?? element(application, kAXMainWindowAttribute)
+    }
+    // Top-left screen coordinates of the primary display.
+    static func frame(of window: AXUIElement) -> CGRect? {
+        guard let positionValue = value(window, kAXPositionAttribute), CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              let sizeValue = value(window, kAXSizeAttribute), CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else { return nil }
+        return CGRect(origin: position, size: size)
+    }
+    // Brings `window` to the front and, when that worked, makes it the application's
+    // main, focused window, so activating the application keeps it in front.
+    @discardableResult
+    static func raise(_ window: AXUIElement, in application: AXUIElement) -> Bool {
+        guard AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else { return false }
+        AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, window)
+        return true
+    }
 }
 
 // Moves and resizes the focused window of the frontmost application through
@@ -59,10 +82,10 @@ final class WindowManager {
     func commit(_ plan: WindowPlan, to target: Target) {
         guard plan.applied else { return }
         queue.async { [self] in
-            let current = Self.frame(of: target.window) ?? plan.start
+            let current = AXQuery.frame(of: target.window) ?? plan.start
             let result = WindowLayout.same(plan.frame, current) ? current
                 : Self.setFrame(plan.frame, from: current, of: target.window, in: target.application,
-                                 screen: plan.screen, screens: target.screens)
+                                 screen: plan.restores ? nil : plan.screen, screens: target.screens)
             if let index = memories.firstIndex(where: { CFEqual($0.window, target.window) }) { memories.remove(at: index) }
             if var memory = plan.memory {
                 memory.lastFrame = result
@@ -74,9 +97,9 @@ final class WindowManager {
 
     private func makeTarget(processID: pid_t, screens: [Screen]) -> Target? {
         let application = AXQuery.application(processID)
-        guard let window = Self.focusedWindow(of: application),
+        guard let window = AXQuery.focusedWindow(of: application),
               (AXQuery.value(window, "AXFullScreen") as? Bool) != true,
-              let current = Self.frame(of: window) else { return nil }
+              let current = AXQuery.frame(of: window) else { return nil }
         let memory = memories.first { CFEqual($0.window, window) }?.memory
         let screen = screens[WindowLayout.screenIndex(for: current, screens: screens.map { $0.frame })]
         return Target(window: window, application: application, screens: screens.map { $0.visible },
@@ -94,25 +117,12 @@ final class WindowManager {
         return NSScreen.screens.map { Screen(frame: flip($0.frame, primaryTop: top), visible: flip($0.visibleFrame, primaryTop: top)) }
     }
 
-    private static func focusedWindow(of application: AXUIElement) -> AXUIElement? {
-        AXQuery.element(application, kAXFocusedWindowAttribute) ?? AXQuery.element(application, kAXMainWindowAttribute)
-    }
-
-    private static func frame(of window: AXUIElement) -> CGRect? {
-        guard let positionValue = AXQuery.value(window, kAXPositionAttribute), CFGetTypeID(positionValue) == AXValueGetTypeID(),
-              let sizeValue = AXQuery.value(window, kAXSizeAttribute), CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
-        var position = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
-              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else { return nil }
-        return CGRect(origin: position, size: size)
-    }
-
     // Every write is a visible redraw in the target app, so only the attributes that
     // change are written, in an order that never needs an off-screen in-between frame
-    // (see WindowLayout.writes). If the app chose another size, it is kept and aligned.
+    // (see WindowLayout.writes). If the app chose another size, it is kept and aligned
+    // within `screen`; with no screen (Restore) the frame is left as written.
     private static func setFrame(_ frame: CGRect, from current: CGRect, of window: AXUIElement,
-                                 in application: AXUIElement, screen: CGRect, screens: [CGRect]) -> CGRect {
+                                 in application: AXUIElement, screen: CGRect?, screens: [CGRect]) -> CGRect {
         let writes = WindowLayout.writes(from: current, to: frame, screens: screens)
         guard !writes.isEmpty else { return current }
         // Apps with enhanced Accessibility UI (Chromium, Electron) animate and drop
@@ -121,17 +131,18 @@ final class WindowManager {
         if enhanced { AXUIElementSetAttributeValue(application, enhancedUserInterface, kCFBooleanFalse) }
         defer { if enhanced { AXUIElementSetAttributeValue(application, enhancedUserInterface, kCFBooleanTrue) } }
         for write in writes { apply(write, frame, to: window) }
-        guard var result = self.frame(of: window) else { return frame }
+        guard var result = AXQuery.frame(of: window) else { return frame }
         if WindowLayout.retriesSize(after: writes, result: result, target: frame) {
             apply(.size, frame, to: window)
-            result = self.frame(of: window) ?? result
+            result = AXQuery.frame(of: window) ?? result
         }
         // Keep the size the app accepted and move it to the edges the target touches,
         // so a right half of a terminal ends at the screen's right edge.
+        guard let screen = screen else { return result }
         let placed = WindowLayout.aligned(result.size, to: frame, in: screen)
         guard !WindowLayout.same(placed, result) else { return result }
         apply(.position, placed, to: window)
-        return self.frame(of: window) ?? placed
+        return AXQuery.frame(of: window) ?? placed
     }
 
     private static func apply(_ write: FrameWrite, _ frame: CGRect, to window: AXUIElement) {

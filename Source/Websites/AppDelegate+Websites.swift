@@ -14,16 +14,12 @@ extension AppDelegate {
     // Starts empty. Unreadable saved data is preserved and reported by the thrown error
     // instead of being silently replaced.
     func loadWebsites() throws {
-        do {
-            websites = try StoredList.load([WebsiteEntry].self, forKey: DefaultsKey.websites,
-                                           description: "websites") ?? []
-        } catch {
-            websites = []
-            throw error
-        }
+        websites = []
+        if let saved = try StoredList.load([WebsiteEntry].self, forKey: DefaultsKey.websites,
+                                           description: "websites") { websites = saved }
     }
     func saveWebsites() {
-        if let data = try? JSONEncoder().encode(websites) { UserDefaults.standard.set(data, forKey: DefaultsKey.websites) }
+        StoredList.save(websites, forKey: DefaultsKey.websites)
         websiteList?.reload()
     }
 
@@ -36,15 +32,11 @@ extension AppDelegate {
     }
 
     func addWebsitesPage(to page: NSView) {
-        let size = Self.preferenceSize
-        let scroll = makeListScroll(size: size, headerHeight: 28)
+        let width = page.bounds.width
         let list = WebsiteListController(owner: self)
         websiteList = list
-        configureList(list.table, width: size.width, title: "Website", nameWidth: Self.websiteNameColumnWidth)
-        scroll.documentView = list.table
-        page.addSubview(scroll)
-        addListHeader(to: page, table: list.table, size: size)
-        addListControls(to: page, width: size.width,
+        let scroll = addList(list.table, to: page, title: "Website", nameWidth: Self.websiteNameColumnWidth)
+        addListControls(to: page, width: width,
                         add: { [weak self] in self?.addWebsite() },
                         remove: { [weak self] in self?.removeWebsites() }, itemName: "Website")
         addListHelp([
@@ -56,15 +48,8 @@ extension AppDelegate {
             ("Domain and path", "Matches that page and below"),
             ("Double-click a website", "Edit its name and URL"),
             ("Right-click a website", "Open or edit it")
-        ], to: page, trailing: size.width - 12)
-        let empty = NSTextField(labelWithString: "No Websites. Click + to add one.")
-        empty.font = .systemFont(ofSize: 13)
-        empty.textColor = .secondaryLabelColor
-        empty.alignment = .center
-        empty.frame = NSRect(x: 0, y: scroll.frame.midY - 9, width: scroll.frame.width, height: 18)
-        empty.autoresizingMask = [.width, .minYMargin, .maxYMargin]
-        page.addSubview(empty)
-        list.emptyLabel = empty
+        ], to: page, trailing: width - 12)
+        list.emptyLabel = addEmptyListLabel("No Websites. Click + to add one.", over: scroll, to: page)
         list.reload()
     }
 
@@ -152,9 +137,7 @@ extension AppDelegate {
         guard let table = websiteList?.table, let firstRow = table.selectedRowIndexes.first,
               ListSelection.remove(table.selectedRowIndexes, from: &websites) else { return }
         saveWebsites()
-        let rows = table.numberOfRows
-        table.selectRowIndexes(rows == 0 ? IndexSet() : IndexSet(integer: min(firstRow, rows - 1)),
-                               byExtendingSelection: false)
+        ListSelection.selectAfterRemoval(at: firstRow, in: table)
     }
 
     // Return or Open in the list, like opening a folder there: switches to
@@ -166,11 +149,17 @@ extension AppDelegate {
         closePreferencesForAction()
         for site in sites { openWebsite(site) }
     }
-    private func openWebsite(_ site: WebsiteEntry) {
+    // The address to open and the pages it matches; nil, reported, for a saved address
+    // that no longer parses.
+    private func destination(of site: WebsiteEntry) -> (url: URL, scope: WebsiteScope)? {
         guard let url = URL(string: site.url), let scope = site.scope else {
             showError(ToolError(message: "Could not open \(site.name). Add the website again."))
-            return
+            return nil
         }
+        return (url, scope)
+    }
+    private func openWebsite(_ site: WebsiteEntry) {
+        guard case let (url, scope)? = destination(of: site) else { return }
         guard let browser = Browser.scriptableDefault(), let running = browser.running else {
             NSWorkspace.shared.open(url)
             return
@@ -216,11 +205,7 @@ extension AppDelegate {
     // to a running app. Otherwise it asks first in the HUD, like launching an app, and
     // opens the address: in a new tab, or by launching the browser.
     func openWebsiteShortcut(_ site: WebsiteEntry) {
-        guard !showingLaunchConfirmation else { return }
-        guard let url = URL(string: site.url), let scope = site.scope else {
-            showError(ToolError(message: "Could not open \(site.name). Add the website again."))
-            return
-        }
+        guard !showingLaunchConfirmation, case let (url, scope)? = destination(of: site) else { return }
         guard let browser = Browser.scriptableDefault(), let running = browser.running else {
             confirmOpening(site, url: url)
             return
@@ -261,12 +246,7 @@ extension AppDelegate {
             openInBrowser(url)
             return true
         }
-        showingLaunchConfirmation = true
-        closePreferencesForAction(keepingApplicationActive: true)
-        let confirmed = capsOverlay.confirm(appName: site.name, icon: WebsiteEntry.browserIcon)
-        showingLaunchConfirmation = false
-        hideDockIfIdle()
-        guard confirmed else { return false }
+        guard askToOpen(site.name, icon: WebsiteEntry.browserIcon) else { return false }
         openInBrowser(url)
         return true
     }

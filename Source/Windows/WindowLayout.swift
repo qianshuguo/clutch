@@ -106,6 +106,9 @@ struct WindowPlan: Equatable {
     init(start: CGRect, screen: CGRect, memory: WindowMemory?) {
         self.start = start; self.screen = screen; startMemory = memory; frame = start; self.memory = memory
     }
+    // Restore puts the window back exactly, even partly off-screen or on another
+    // display, so it is not aligned or kept on screen (as in Rectangle).
+    var restores: Bool { applied && lastCommand == .down }
     // Pressing the same key again continues (← ½ → ⅔ → ⅓, ↑ height ⇄ full, = = −).
     // Switching to another key starts over from the window as it is, so ← then ↑
     // previews exactly what ↑ alone would.

@@ -75,7 +75,7 @@ extension AppDelegate {
         recorder.selectionTable = table
         recorder.autoresizingMask = [.minXMargin]
         recorder.shortcutKeys = keys
-        recorder.maxKeys = owner.isWindow ? 1 : AppShortcut.maxKeys
+        recorder.maxKeys = owner.isWindow ? 1 : KeyboardState.maxShortcutKeys
         recorder.capsAvailable = { [weak self] in self?.tap != nil }
         recorder.onStart = { [weak self, weak table] in
             self?.state.cancelGesture()
@@ -105,6 +105,30 @@ extension AppDelegate {
         scroll.contentView.drawsBackground = false
         scroll.automaticallyAdjustsContentInsets = false
         return scroll
+    }
+    // A Preferences list page's table, configured by configureList, in a scroll view
+    // between the column header and the bottom bar. Returns the scroll view.
+    @discardableResult
+    func addList(_ table: NSTableView, to page: NSView, title: String, nameWidth: CGFloat = 244) -> NSScrollView {
+        let size = page.bounds.size
+        let scroll = makeListScroll(size: size, headerHeight: 28)
+        configureList(table, width: size.width, title: title, nameWidth: nameWidth)
+        scroll.documentView = table
+        scroll.tile()
+        page.addSubview(scroll)
+        addListHeader(to: page, table: table, size: size)
+        return scroll
+    }
+    // Gray text centered over a list with no rows.
+    func addEmptyListLabel(_ text: String, over scroll: NSScrollView, to page: NSView) -> NSTextField {
+        let empty = NSTextField(labelWithString: text)
+        empty.font = .systemFont(ofSize: 13)
+        empty.textColor = .secondaryLabelColor
+        empty.alignment = .center
+        empty.frame = NSRect(x: 0, y: scroll.frame.midY - 9, width: scroll.frame.width, height: 18)
+        empty.autoresizingMask = [.width, .minYMargin, .maxYMargin]
+        page.addSubview(empty)
+        return empty
     }
     func makeListButton(symbol: String, x: CGFloat, action: @escaping () -> Void, tip: String) -> NSButton {
         let button = ListActionButton(action: action)
@@ -234,8 +258,7 @@ extension AppDelegate {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        let typed = (field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
-        if FileManager.default.isDirectory(atPath: typed) { panel.directoryURL = URL(fileURLWithPath: typed, isDirectory: true) }
+        if let typed = existingFolder(atLocation: field.stringValue) { panel.directoryURL = URL(fileURLWithPath: typed, isDirectory: true) }
         panel.beginSheetModal(for: sheet) { response in
             guard response == .OK, let url = panel.url else { return }
             field.stringValue = (url.standardizedFileURL.path as NSString).abbreviatingWithTildeInPath
