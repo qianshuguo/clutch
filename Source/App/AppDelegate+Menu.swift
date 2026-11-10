@@ -17,7 +17,7 @@ extension AppDelegate: NSMenuItemValidation {
         }
         add("Preferences", #selector(showSettings), ",")
         add("Close Window", #selector(closeSettings), "w", hidden: true)
-        add("Find", #selector(findApplication), "f", hidden: true)
+        add("Find", #selector(findInList), "f", hidden: true)
         let toggleItem = add("Enable Clutch", #selector(toggle), "s")
         menu.addItem(.separator())
         add("Quit Clutch", #selector(quitApp), "q")
@@ -48,9 +48,7 @@ extension AppDelegate: NSMenuItemValidation {
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggle) { updateToggleMenuTitle() }
-        if menuItem.action == #selector(findApplication) {
-            return window?.isVisible == true && Self.preferenceTabs[selectedPage].id == "apps"
-        }
+        if menuItem.action == #selector(findInList) { return visibleEntryList != nil }
         if menuItem.action == #selector(closeSettings) { return window?.isVisible == true }
         return true
     }

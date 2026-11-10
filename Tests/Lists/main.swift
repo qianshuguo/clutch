@@ -77,7 +77,7 @@ expect(preferencesTable.dataSource === preferences.controller, "preferences reta
 expect(preferences.controller.tableView(preferencesTable, rowViewForRow: 0) is InsetListRowView, "folders use the inset selection style")
 expect(preferences.controller.tableView(preferencesTable, typeSelectStringFor: nil, row: 1) == "Second", "folder type selection uses display names")
 // Preferences > Folders: App List's shortcut fields; the path shows when pointing at a folder.
-expect(preferencesTable.tableColumns.map { $0.title } == ["Name", "Shortcut"], "Folders preferences show shortcut fields, not paths")
+expect(preferencesTable.tableColumns.map { $0.title } == ["Folder", "Shortcut"], "Folders preferences show shortcut fields, not paths")
 expect(!preferences.controller.tableView(preferencesTable, viewFor: preferencesTable.tableColumns[1], row: 0)!.subviews
         .contains { ($0 as? NSTextField)?.stringValue.contains("/") == true }, "folder rows show no path")
 let folderNameCell = preferences.controller.tableView(preferencesTable, viewFor: preferencesTable.tableColumns[0], row: 0)!
@@ -448,7 +448,7 @@ expect(searchOwner.bindings.map { $0.name } == ["Messages", "Microsoft Word", "S
 expect(shownNames() == ["Microsoft Word"] && searchList.table.selectedRowIndexes == IndexSet(integer: 0),
        "after removal the nearest remaining row is selected")
 searchList.setFilter("w")
-searchList.reveal(bindingAt: 2)
+searchList.reveal(entryAt: 2)
 expect(searchList.filter.isEmpty && searchList.table.selectedRowIndexes == IndexSet(integer: 2),
        "revealing a hidden application clears the search")
 if let data = savedShortcuts { UserDefaults.standard.set(data, forKey: DefaultsKey.shortcuts) }

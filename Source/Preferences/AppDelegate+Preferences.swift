@@ -119,45 +119,13 @@ extension AppDelegate: NSToolbarDelegate {
     func addApplicationsPage(to page: NSView) {
         let list = ApplicationListController(owner: self)
         applicationList = list
-        let scroll = addList(list.table, to: page, title: "Application")
-        let width = page.bounds.width
-        addListControls(to: page, width: width,
-                        add: { [weak self] in self?.addBinding() },
-                        remove: { [weak self] in self?.removeBinding() }, itemName: "Application")
-        let help = addListHelp([
-            ("Caps + key, release Caps", "Switch to the app"),
-            ("Set a shortcut", "Hold ⇪ + up to 3 keys"),
-            ("Press again", "Next window of that app"),
-            ("Not running", "Asks first; Return opens it"),
-            ("⌘F", "Search by app name"),
-            ("Type in the list", "Jump to an app by name")
-        ], to: page, trailing: width - 12)
-        addApplicationSearch(to: page, list: list, scroll: scroll, before: help)
-    }
-    // A small search field in the App List bottom bar, ending just before the ? button,
-    // plus the notice shown over the list when nothing matches.
-    func addApplicationSearch(to page: NSView, list: ApplicationListController, scroll: NSScrollView, before help: NSView) {
-        let search = NSSearchField()
-        search.controlSize = .small
-        search.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        search.placeholderString = "Search"
-        search.sendsSearchStringImmediately = true
-        search.target = list
-        search.action = #selector(ApplicationListController.searchChanged(_:))
-        search.delegate = list
-        search.setAccessibilityLabel("Search applications")
-        search.sizeToFit()
-        let width: CGFloat = 160
-        let height = search.frame.height
-        search.frame = NSRect(x: help.frame.minX - 8 - width, y: ((32 - height) / 2).rounded(),
-                              width: width, height: height)
-        search.autoresizingMask = [.minXMargin]
-        page.addSubview(search)
-        list.searchField = search
-
-        let empty = addEmptyListLabel("No Matching Applications", over: scroll, to: page)
-        empty.isHidden = true
-        list.emptyLabel = empty
+        addEntryListPage(ListPageSpec(
+            entryName: "Application", pluralName: "Applications",
+            shortcutAction: "Switch to the app",
+            help: [("Press again", "Next window of that app"),
+                   ("Not running", "Asks first; Return opens it")],
+            add: { [weak self] in self?.addBinding() },
+            remove: { [weak self] in self?.removeBinding() }), list: list, to: page)
     }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         Self.preferenceTabs.map { NSToolbarItem.Identifier($0.id) }
@@ -187,6 +155,7 @@ extension AppDelegate: NSToolbarDelegate {
         selectedPage = index
         for (position, page) in pages.enumerated() { page.isHidden = position != index }
         window?.toolbar?.selectedItemIdentifier = NSToolbarItem.Identifier(Self.preferenceTabs[index].id)
-        if Self.preferenceTabs[index].id == "folders" { window?.makeFirstResponder(preferencesFolderList?.table) }
+        // A list page starts with its list focused, so typing jumps to an entry.
+        if let list = entryList(onPage: index) { window?.makeFirstResponder(list.listTable) }
     }
 }

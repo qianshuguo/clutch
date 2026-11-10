@@ -3,29 +3,27 @@ import Cocoa
 extension AppDelegate {
     // The Folders page of Preferences: the list with a header and shortcut fields.
     func addFoldersPage(to page: NSView) {
-        let width = page.bounds.width
         let controller = FolderListController(owner: self)
         preferencesFolderList = controller
         let list = controller.table
         list.allowsMultipleSelection = true
         list.registerForDraggedTypes([folderDragType])
         list.setDraggingSourceOperationMask(.move, forLocal: true)
-        addList(list, to: page, title: "Name")
-        addListControls(to: page, width: width,
-                        add: { [weak self, weak controller] in
-                            guard let controller = controller else { return }
-                            self?.addFolders(to: controller)
-                        }, remove: { [weak self, weak controller] in
-                            guard let controller = controller else { return }
-                            self?.removeFolders(from: controller)
-                        }, itemName: "Folder")
-        addListHelp([
-            ("Caps + shortcut, release Caps", "Open the folder in Finder"),
-            ("Set a shortcut", "Hold ⇪ + up to 3 keys"),
-            ("Hover a folder", "Show its path"),
-            ("Double-click a folder", "Edit its name and location"),
-            ("Right-click a folder", "Open, edit or reveal it")
-        ], to: page, trailing: width - 12)
+        addEntryListPage(ListPageSpec(
+            entryName: "Folder", pluralName: "Folders",
+            shortcutAction: "Open the folder in Finder",
+            help: [("Hover a folder", "Show its path"),
+                   ("Drag a folder", "Change the order"),
+                   ("Double-click a folder", "Edit its name and location"),
+                   ("Right-click a folder", "Open, edit or reveal it")],
+            add: { [weak self, weak controller] in
+                guard let controller = controller else { return }
+                self?.addFolders(to: controller)
+            },
+            remove: { [weak self, weak controller] in
+                guard let controller = controller else { return }
+                self?.removeFolders(from: controller)
+            }), list: controller, to: page)
     }
     // First-run Folders list, in order. Folders that do not exist are skipped.
     static var defaultFolders: [FolderEntry] {
@@ -44,7 +42,7 @@ extension AppDelegate {
     }
     func saveFolders() {
         StoredList.save(folders, forKey: DefaultsKey.folders)
-        preferencesFolderList?.table.reloadData()
+        preferencesFolderList?.reload()
     }
     // +: the sheet Websites shares (showFieldSheet), with Name and Location; Choose…
     // picks the folder. An empty name uses the folder's own name. A folder already listed
@@ -81,7 +79,6 @@ extension AppDelegate {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let path = folderPath(for: location) else { return }
-        let targetTable = controller.table
         let index: Int
         if let existing = folders.firstIndex(where: { $0.path == path }) {
             index = existing
@@ -92,8 +89,7 @@ extension AppDelegate {
             saveFolders()
             index = folders.count - 1
         }
-        targetTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-        targetTable.scrollRowToVisible(index)
+        controller.reveal(entryAt: index)
     }
     // existingFolder(atLocation:), with what is wrong reported when it is nil.
     func folderPath(for location: String) -> String? {
@@ -105,11 +101,11 @@ extension AppDelegate {
     }
     // Removes the selected folders and selects the row that took the first one's place.
     func removeFolders(from controller: FolderListController) {
-        let targetTable = controller.table
-        guard let firstRow = targetTable.selectedRowIndexes.first,
-              ListSelection.remove(targetTable.selectedRowIndexes, from: &folders) else { return }
+        let selection = controller.selectedEntryIndices
+        guard let firstRow = controller.table.selectedRowIndexes.first,
+              ListSelection.remove(selection, from: &folders) else { return }
         saveFolders()
-        ListSelection.selectAfterRemoval(at: firstRow, in: targetTable)
+        ListSelection.selectAfterRemoval(at: firstRow, in: controller.table)
     }
     // `selection`: indexes into `folders`.
     func openSelectedFolders(_ selection: IndexSet, in targetTable: NSTableView) {
@@ -157,10 +153,7 @@ extension AppDelegate {
         if let location = location {
             guard let standardized = folderPath(for: location) else { return }
             if let other = folders.indices.first(where: { $0 != index && folders[$0].path == standardized }) {
-                if let table = targetTable {
-                    table.selectRowIndexes(IndexSet(integer: other), byExtendingSelection: false)
-                    table.scrollRowToVisible(other)
-                }
+                if let list = preferencesFolderList, list.table === targetTable { list.reveal(entryAt: other) }
                 showError(ToolError(message: "\((standardized as NSString).abbreviatingWithTildeInPath) is already in Folders as \(folders[other].name)."))
                 return
             }

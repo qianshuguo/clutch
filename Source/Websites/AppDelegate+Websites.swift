@@ -32,25 +32,20 @@ extension AppDelegate {
     }
 
     func addWebsitesPage(to page: NSView) {
-        let width = page.bounds.width
         let list = WebsiteListController(owner: self)
         websiteList = list
-        let scroll = addList(list.table, to: page, title: "Website", nameWidth: Self.websiteNameColumnWidth)
-        addListControls(to: page, width: width,
-                        add: { [weak self] in self?.addWebsite() },
-                        remove: { [weak self] in self?.removeWebsites() }, itemName: "Website")
-        addListHelp([
-            ("Caps + key, release Caps", "Go to the website"),
-            ("Set a shortcut", "Hold ⇪ + up to 3 keys"),
-            ("Already open", "Switches to its tab"),
-            ("Press again", "Next tab of that website"),
-            ("Only a domain", "Matches the whole site"),
-            ("Domain and path", "Matches that page and below"),
-            ("Double-click a website", "Edit its name and URL"),
-            ("Right-click a website", "Open or edit it")
-        ], to: page, trailing: width - 12)
-        list.emptyLabel = addEmptyListLabel("No Websites. Click + to add one.", over: scroll, to: page)
-        list.reload()
+        addEntryListPage(ListPageSpec(
+            entryName: "Website", pluralName: "Websites",
+            nameWidth: Self.websiteNameColumnWidth,
+            shortcutAction: "Go to the website",
+            help: [("Already open", "Switches to its tab"),
+                   ("Press again", "Next tab of that website"),
+                   ("Only a domain", "Matches the whole site"),
+                   ("Domain and path", "Matches that page and below"),
+                   ("Double-click a website", "Edit its name and URL"),
+                   ("Right-click a website", "Open or edit it")],
+            add: { [weak self] in self?.addWebsite() },
+            remove: { [weak self] in self?.removeWebsites() }), list: list, to: page)
     }
 
     // Add and Edit use the sheet Folders shares (showFieldSheet): Name and URL, like a
@@ -105,14 +100,14 @@ extension AppDelegate {
               let parsed = websiteURL(for: text) else { return }
         let url = parsed.url, address = parsed.address
         if let index = websites.firstIndex(where: { WebsiteAddress($0.url) == address }) {
-            websiteList?.reveal(websiteAt: index)
+            websiteList?.reveal(entryAt: index)
             return
         }
         let site = WebsiteEntry(url: url, title: name.trimmingCharacters(in: .whitespacesAndNewlines),
                                 includesSubdomains: includesSubdomains)
         websites.append(site)
         saveWebsites()
-        websiteList?.reveal(websiteAt: websites.count - 1)
+        websiteList?.reveal(entryAt: websites.count - 1)
         logStatus("Added \(site.name). Click its shortcut field to assign a key.")
     }
     // Renames a website and changes its address, keeping its shortcut. An address another
@@ -122,7 +117,7 @@ extension AppDelegate {
         guard websites.indices.contains(index), let parsed = websiteURL(for: text) else { return }
         let url = parsed.url, address = parsed.address
         if let other = websites.indices.first(where: { $0 != index && WebsiteAddress(websites[$0].url) == address }) {
-            websiteList?.reveal(websiteAt: other)
+            websiteList?.reveal(entryAt: other)
             showError(ToolError(message: "\(address.display) is already in Websites as \(websites[other].name)."))
             return
         }
@@ -130,14 +125,15 @@ extension AppDelegate {
         websites[index].title = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if let includesSubdomains = includesSubdomains { websites[index].includesSubdomains = includesSubdomains }
         saveWebsites()
-        websiteList?.reveal(websiteAt: index)
+        websiteList?.reveal(entryAt: index)
     }
     // Removes the selected websites and selects the row that took the first one's place.
     func removeWebsites() {
-        guard let table = websiteList?.table, let firstRow = table.selectedRowIndexes.first,
-              ListSelection.remove(table.selectedRowIndexes, from: &websites) else { return }
+        guard let list = websiteList, let firstRow = list.table.selectedRowIndexes.first else { return }
+        let selection = list.selectedEntryIndices
+        guard ListSelection.remove(selection, from: &websites) else { return }
         saveWebsites()
-        ListSelection.selectAfterRemoval(at: firstRow, in: table)
+        ListSelection.selectAfterRemoval(at: firstRow, in: list.table)
     }
 
     // Return or Open in the list, like opening a folder there: switches to

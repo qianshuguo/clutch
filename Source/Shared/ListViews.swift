@@ -262,3 +262,127 @@ final class HelpButton: NSButton {
         newPopover.show(relativeTo: bounds, of: self, preferredEdge: isFlipped ? .maxY : .minY)
     }
 }
+
+// The search of a Preferences list page (App List, Folders, Websites): entries whose
+// name contains the query, ignoring case, accents and surrounding spaces, in list order.
+// Shortcuts are not searched. In the field, Down or Return moves into the results and
+// Escape clears the search, returning to the list; it never closes Preferences from there.
+// Also keeps the gray label over the list: `emptyText` with no entries, `noMatchText`
+// when the search hides them all.
+final class ListSearch: NSObject, NSSearchFieldDelegate {
+    private(set) var query = ""
+    weak var table: NSTableView?
+    weak var field: NSSearchField?
+    weak var emptyLabel: NSTextField?
+    var emptyText = ""
+    var noMatchText = ""
+    // The person changed the text in the field.
+    var onChange: ((String) -> Void)?
+    // Worked out once per change of the query or the names, not for every row AppKit asks about.
+    private var cache: (query: String, names: [String], indices: [Int])?
+
+    static func matches(_ name: String, query: String) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || name.localizedStandardContains(trimmed)
+    }
+    // Indexes into `names` of the rows shown, in row order.
+    func visibleIndices(names: [String]) -> [Int] {
+        if let cache = cache, cache.query == query, cache.names == names { return cache.indices }
+        let indices = names.indices.filter { Self.matches(names[$0], query: query) }
+        cache = (query, names, indices)
+        return indices
+    }
+    func setQuery(_ text: String) { query = text }
+    func updateEmptyLabel(entryCount: Int, rowCount: Int) {
+        guard let label = emptyLabel else { return }
+        label.stringValue = entryCount == 0 ? emptyText : noMatchText
+        label.isHidden = rowCount > 0 || label.stringValue.isEmpty
+    }
+    func focus() {
+        guard let field = field else { NSSound.beep(); return }
+        field.window?.makeFirstResponder(field)
+        field.currentEditor()?.selectAll(nil)
+    }
+    @objc func fieldChanged(_ sender: NSSearchField) { onChange?(sender.stringValue) }
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard let table = table else { return false }
+        switch commandSelector {
+        case #selector(NSResponder.moveDown(_:)), #selector(NSResponder.insertNewline(_:)):
+            // Keeps or starts a selection in the results.
+            guard table.numberOfRows > 0 else { return true }
+            control.window?.makeFirstResponder(table)
+            if table.selectedRowIndexes.isEmpty {
+                table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            }
+            table.scrollRowToVisible(table.selectedRow)
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            field?.stringValue = ""
+            onChange?("")
+            control.window?.makeFirstResponder(table)
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+// A Preferences list page's controller. Its rows are the entries `search` matches, in
+// list order; `entryIndex(forRow:)` maps a row back to its entry. Callers act on
+// `selectedEntryIndices`, never on table rows, since a search may be hiding entries.
+protocol SearchableList: AnyObject {
+    // The controller's table (`table`), whatever its class.
+    var listTable: NSTableView { get }
+    var search: ListSearch { get }
+    // Every entry's name, and an ID that stays with it while the search changes, in list order.
+    var entryNames: [String] { get }
+    var entryIDs: [String] { get }
+    // Reloads the table; calls updateEmptyLabel().
+    func reload()
+}
+
+extension SearchableList {
+    // Text in the search field; empty shows every entry.
+    var filter: String { search.query }
+    var visibleIndices: [Int] { search.visibleIndices(names: entryNames) }
+    func entryIndex(forRow row: Int) -> Int? {
+        let visible = visibleIndices
+        return visible.indices.contains(row) ? visible[row] : nil
+    }
+    func row(forEntryAt index: Int) -> Int? { visibleIndices.firstIndex(of: index) }
+    var selectedEntryIndices: IndexSet {
+        let visible = visibleIndices
+        return IndexSet(listTable.selectedRowIndexes.filter { visible.indices.contains($0) }.map { visible[$0] })
+    }
+    // Wires the search to this list. Called once, from the controller's init.
+    func connectSearch() {
+        search.table = listTable
+        search.onChange = { [weak self] text in self?.setFilter(text) }
+    }
+    // Keeps the selected entries selected when they still match.
+    func setFilter(_ text: String) {
+        guard text != search.query else { return }
+        let ids = entryIDs
+        let selected = Set(selectedEntryIndices.map { ids[$0] })
+        search.setQuery(text)
+        reload()
+        let visible = visibleIndices
+        let rows = IndexSet(visible.indices.filter { selected.contains(ids[visible[$0]]) })
+        listTable.selectRowIndexes(rows, byExtendingSelection: false)
+        listTable.scrollRowToVisible(rows.first ?? 0)
+    }
+    func clearFilter() {
+        search.field?.stringValue = ""
+        setFilter("")
+    }
+    // Selects the entry, clearing a search that hides it.
+    func reveal(entryAt index: Int) {
+        if row(forEntryAt: index) == nil { clearFilter() }
+        guard let row = row(forEntryAt: index) else { return }
+        listTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        listTable.scrollRowToVisible(row)
+    }
+    func updateEmptyLabel() {
+        search.updateEmptyLabel(entryCount: entryNames.count, rowCount: listTable.numberOfRows)
+    }
+}

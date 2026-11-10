@@ -292,14 +292,14 @@ extension AppDelegate {
             guard let self = self, response == .OK, let url = panel.url, let bundle = Bundle(url:url), bundle.bundleIdentifier != nil else { return }
             let name = (bundle.object(forInfoDictionaryKey:"CFBundleDisplayName") as? String) ?? url.deletingPathExtension().lastPathComponent
             if let index = self.bindings.firstIndex(where: { $0.path == url.path || $0.bundleID == bundle.bundleIdentifier }) {
-                self.applicationList?.reveal(bindingAt: index)
+                self.applicationList?.reveal(entryAt: index)
                 return
             }
             self.bindings.append(AppShortcut(name: name, path: url.path, bundleID: bundle.bundleIdentifier))
             self.bindings.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             self.saveBindings()
             if let index = self.bindings.firstIndex(where: { $0.path == url.path }) {
-                self.applicationList?.reveal(bindingAt: index)
+                self.applicationList?.reveal(entryAt: index)
             }
             self.logStatus("Added \(name). Click its shortcut field to assign a key.")
         }
@@ -308,14 +308,10 @@ extension AppDelegate {
     // their applications. The row now at the first removed position is selected.
     @objc func removeBinding() {
         guard let list = applicationList, let firstRow = list.table.selectedRowIndexes.first else { return }
-        guard ListSelection.remove(list.selectedBindingIndices, from: &bindings) else { return }
+        let selection = list.selectedEntryIndices
+        guard ListSelection.remove(selection, from: &bindings) else { return }
         saveBindings()
         ListSelection.selectAfterRemoval(at: firstRow, in: list.table)
-    }
-    // Command-F on the App List page.
-    @objc func findApplication() {
-        guard window?.isVisible == true, Self.preferenceTabs[selectedPage].id == "apps" else { NSSound.beep(); return }
-        applicationList?.focusSearch()
     }
     // Where the app is now (its saved path, or where its bundle ID moved) and its
     // running instance, if any.

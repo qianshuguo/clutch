@@ -164,6 +164,62 @@ extension AppDelegate {
         return help
     }
 
+    // App List, Folders and Websites: the list between its column header and a bottom bar
+    // with + / −, a search field and ?, and a gray label over the list when it has no
+    // entries or the search matches none. Everything these pages share is built here;
+    // the spec holds only what differs. Windows has fixed actions and builds its own page.
+    func addEntryListPage(_ spec: ListPageSpec, list: SearchableList, to page: NSView) {
+        let width = page.bounds.width
+        let scroll = addList(list.listTable, to: page, title: spec.entryName, nameWidth: spec.nameWidth)
+        addListControls(to: page, width: width, add: spec.add, remove: spec.remove, itemName: spec.entryName)
+        let help = addListHelp([("Caps + key, release Caps", spec.shortcutAction),
+                                ("Set a shortcut", "Hold ⇪ + up to 3 keys")]
+                               + spec.help
+                               + [("⌘F", "Search by name"),
+                                  ("Type in the list", "Jump to one by name")],
+                               to: page, trailing: width - 12)
+        let search = list.search
+        let field = NSSearchField()
+        field.controlSize = .small
+        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        field.placeholderString = "Search"
+        field.sendsSearchStringImmediately = true
+        field.target = search
+        field.action = #selector(ListSearch.fieldChanged(_:))
+        field.delegate = search
+        field.setAccessibilityLabel("Search \(spec.pluralName.lowercased())")
+        field.sizeToFit()
+        let fieldWidth: CGFloat = 160
+        let fieldHeight = field.frame.height
+        field.frame = NSRect(x: help.frame.minX - 8 - fieldWidth, y: ((32 - fieldHeight) / 2).rounded(),
+                             width: fieldWidth, height: fieldHeight)
+        field.autoresizingMask = [.minXMargin]
+        page.addSubview(field)
+        search.field = field
+        search.emptyText = "No \(spec.pluralName). Click + to add one."
+        search.noMatchText = "No Matching \(spec.pluralName)"
+        search.emptyLabel = addEmptyListLabel("", over: scroll, to: page)
+        list.reload()
+    }
+    // The list on Preferences tab `index`, if that tab is a list page.
+    func entryList(onPage index: Int) -> SearchableList? {
+        switch Self.preferenceTabs[index].id {
+        case "apps": return applicationList
+        case "folders": return preferencesFolderList
+        case "websites": return websiteList
+        default: return nil
+        }
+    }
+    // The list page shown in Preferences, if the current tab is one.
+    var visibleEntryList: SearchableList? {
+        window?.isVisible == true ? entryList(onPage: selectedPage) : nil
+    }
+    // Command-F on a list page.
+    @objc func findInList() {
+        guard let list = visibleEntryList else { NSSound.beep(); return }
+        list.search.focus()
+    }
+
     // The Add/Edit sheet Websites and Folders share: a title, an optional message, one
     // labeled text field per row, and `button` with Cancel. A field that `choosesFolder`
     // has a Choose… button that fills it from a folder picker. A field with a
@@ -280,4 +336,19 @@ struct SheetField {
     var choosesFolder = false
     // Gray text shown while the field is empty, from every field's current text, in order.
     var placeholder: (([String]) -> String)? = nil
+}
+
+// What one list page differs in; addEntryListPage builds the rest the same way.
+struct ListPageSpec {
+    // The first column's title and the + / − tips: "Application".
+    var entryName: String
+    // The empty and no-match labels: "Applications".
+    var pluralName: String
+    var nameWidth: CGFloat = 244
+    // What Caps + an entry's shortcut does, first in ?: "Switch to the app".
+    var shortcutAction: String
+    // This page's own ? rows, between the shared ones.
+    var help: [HelpButton.Item]
+    var add: () -> Void
+    var remove: () -> Void
 }

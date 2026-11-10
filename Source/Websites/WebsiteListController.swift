@@ -1,13 +1,16 @@
 import Cocoa
 
 // Preferences > Websites: the App List layout with websites on the left and their Caps
-// shortcut on the right, in `owner.websites` order. Each row shows the name, or the address it
+// shortcut on the right: the websites matching the search, in `owner.websites` order. Each row shows the name, or the address it
 // matches when it has none; pointing at a row shows the full address. Return opens the selected
 // websites; double-click or Edit… in the context menu changes the name and URL. Retained by AppDelegate with the preferences view tree.
-final class WebsiteListController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class WebsiteListController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SearchableList {
     unowned let owner: AppDelegate
     let table = EntryTableView()
-    weak var emptyLabel: NSTextField?
+    let search = ListSearch()
+    var listTable: NSTableView { table }
+    var entryNames: [String] { owner.websites.map { $0.name } }
+    var entryIDs: [String] { owner.websites.map { $0.url } }
     // Every row shows the default browser's icon: that is where the page opens.
     // Looked up once per reload, not for every row.
     private var icon: NSImage?
@@ -25,50 +28,47 @@ final class WebsiteListController: NSObject, NSTableViewDataSource, NSTableViewD
         table.editSelection = { [weak self] in self?.editSelected() }
         table.openSelection = { [weak self] in
             guard let self = self else { return }
-            self.owner.openWebsites(self.table.selectedRowIndexes)
+            self.owner.openWebsites(self.selectedEntryIndices)
         }
+        connectSearch()
     }
 
     // Double-click edits the website, like Folders in Settings.
     @objc private func doubleClick() {
         // Shortcut fields take their own clicks.
-        guard owner.websites.indices.contains(table.clickedRow) else { return }
-        owner.editWebsite(at: table.clickedRow)
+        guard let index = entryIndex(forRow: table.clickedRow) else { return }
+        owner.editWebsite(at: index)
     }
     private func editSelected() {
-        guard table.selectedRowIndexes.count == 1, let row = table.selectedRowIndexes.first else { return }
-        owner.editWebsite(at: row)
+        let selection = selectedEntryIndices
+        guard selection.count == 1, let index = selection.first else { return }
+        owner.editWebsite(at: index)
     }
 
     func reload() {
         icon = WebsiteEntry.browserIcon
         table.reloadData()
-        emptyLabel?.isHidden = !owner.websites.isEmpty
-    }
-    func reveal(websiteAt index: Int) {
-        guard owner.websites.indices.contains(index) else { return }
-        table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-        table.scrollRowToVisible(index)
+        updateEmptyLabel()
     }
 
     func tableView(_ tableView: NSTableView, selectionIndexesForProposedSelection proposedSelectionIndexes: IndexSet) -> IndexSet {
         // Keep click/keyboard selection, but do not extend it by sweeping the mouse.
         ListSelection.proposed(proposedSelectionIndexes, in: tableView)
     }
-    func numberOfRows(in tableView: NSTableView) -> Int { owner.websites.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { visibleIndices.count }
     func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? {
         if let column = tableColumn, tableView.tableColumns.firstIndex(of: column) != 0 { return nil }
-        return owner.websites.indices.contains(row) ? owner.websites[row].name : nil
+        return entryIndex(forRow: row).map { owner.websites[$0].name }
     }
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         InsetListRowView()
     }
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
-        guard owner.websites.indices.contains(row) else { return nil }
+        guard let index = entryIndex(forRow: row) else { return nil }
         let columnIndex = column.flatMap { tableView.tableColumns.firstIndex(of: $0) } ?? 0
         let cellWidth = tableView.frameOfCell(atColumn: columnIndex, row: row).width
         let cell = NSView(frame: NSRect(x: 0, y: 0, width: cellWidth, height: AppDelegate.appRowHeight))
-        let site = owner.websites[row]
+        let site = owner.websites[index]
         if columnIndex == 0 {
             let image = NSImageView(frame: AppDelegate.listIconFrame)
             image.imageScaling = .scaleProportionallyUpOrDown
