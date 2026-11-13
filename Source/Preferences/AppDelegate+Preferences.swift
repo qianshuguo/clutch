@@ -112,6 +112,7 @@ extension AppDelegate: NSToolbarDelegate {
         addFoldersPage(to: pages[2])
         addWebsitesPage(to: pages[3])
         addWindowsPage(to: pages[4])
+        addShelfPage(to: pages[5])
         syncPreferences()
         selectPage(selectedPage)
         return content

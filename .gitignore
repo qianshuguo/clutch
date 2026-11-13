@@ -5,6 +5,8 @@ build/
 Clutch.app/
 *.log
 Clutch.app.zip
+# 本地提交脚本（add + commit + push），不入库
+commit.command
 
 # ===== macOS =====
 .DS_Store

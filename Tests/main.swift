@@ -463,25 +463,51 @@ print("PASS: Control/Option Caps have no action, both press/release orders, extr
 
 state.reset()
 expect(!state.route(key: 49, down: true, repeated: false, bound: false).swallow, "Space without Caps types normally")
-// Caps + Space has no action: Space is consumed like any unassigned key.
+// Caps + Space opens the Shelf on press; its repeats and release are consumed.
 state.reset()
 capsDown()
 let capsSpace = state.route(key: 49, down: true, repeated: false, bound: false)
-expect(capsSpace.swallow && capsSpace.launchKeys == nil, "Caps Space is consumed")
-expect(state.route(key: 49, down: true, repeated: true, bound: false).swallow, "Space repeats are consumed")
+expect(capsSpace.swallow && capsSpace.showPicker && capsSpace.launchKeys == nil, "Caps Space opens the Shelf")
+expect(!state.showsKeyHint, "Caps Space shows no key hint")
+let spaceRepeat = state.route(key: 49, down: true, repeated: true, bound: false)
+expect(spaceRepeat.swallow && !spaceRepeat.showPicker, "Space repeats are consumed and never reopen")
 expect(state.route(key: 49, down: false, repeated: false, bound: false).swallow, "Space release is consumed")
 let afterSpace = releaseCaps()
-expect(!afterSpace.tap && afterSpace.launchKeys == nil, "Caps Space runs nothing and does not switch input")
+expect(!afterSpace.tap && afterSpace.launchKeys == nil && !afterSpace.openPickerSelection,
+       "Caps Space runs nothing on release and does not switch input")
 state.reset()
 capsDown()
 _ = state.route(key: 3, down: true, repeated: false, bound: true)
-_ = state.route(key: 49, down: true, repeated: false, bound: false)
-expect(state.launchCandidate == nil && releaseCaps().launchKeys == nil, "Space after an app key cancels the shortcut")
+expect(state.route(key: 49, down: true, repeated: false, bound: false).showPicker, "Space after an app key opens the Shelf")
+expect(state.launchCandidate == nil && releaseCaps().launchKeys == nil, "the app shortcut before Space does not run")
 state.reset()
 capsDown()
 _ = state.route(key: 123, down: true, repeated: false, bound: false, windowKey: true)
-_ = state.route(key: 49, down: true, repeated: false, bound: false)
+expect(state.route(key: 49, down: true, repeated: false, bound: false).showPicker, "Space after a window key opens the Shelf")
 expect(!state.windowPreviewActive && releaseCaps().window == nil, "Space after a window key drops the preview")
+state.reset()
+_ = state.route(key: 49, down: true, repeated: false, bound: false)
+capsDown()
+expect(!state.route(key: 49, down: true, repeated: true, bound: false).showPicker, "Space held before Caps does not open the Shelf")
+for modifierFirst in [false, true] {
+    state.reset()
+    _ = state.route(key: 79, down: true, repeated: false, bound: false, otherModifier: modifierFirst)
+    if !modifierFirst { state.modifierChanged(otherModifier: true) }
+    let blocked = state.route(key: 49, down: true, repeated: false, bound: false, otherModifier: true)
+    expect(!blocked.showPicker && blocked.swallow, "Control/Option blocks Caps Space and consumes it")
+    expect(!releaseCaps().tap, "a modified gesture never switches input")
+}
+state.reset()
+capsDown()
+expect(!state.route(key: 49, down: true, repeated: false, bound: false, commandModifier: true).showPicker, "Command blocks Caps Space")
+state.reset()
+capsDown()
+_ = state.route(key: 53, down: true, repeated: false, bound: false)
+expect(!state.route(key: 49, down: true, repeated: false, bound: false).showPicker, "Escape blocks Caps Space")
+state.reset()
+capsDown()
+let pickerSpace = state.route(key: 49, down: true, repeated: false, bound: false, input: .picker, pickerCount: 3)
+expect(!pickerSpace.showPicker && !pickerSpace.swallow, "with the Shelf focused, Space reaches its search")
 state.reset()
 capsDown()
 state.modifierChanged(otherModifier: false, commandModifier: true)
@@ -504,7 +530,131 @@ capsDown()
 _ = state.route(key: 18, down: true, repeated: false, bound: true)
 expect(releaseCaps().launchKeys == [18], "Caps number launches its assigned app")
 state.reset()
-print("PASS: Caps Space has no action, Enter consumption, Caps number shortcuts")
+print("PASS: Caps Space opens the Shelf, blocked by modifiers and Escape, Enter consumption, Caps number shortcuts")
+
+// The focused Shelf picker: Caps + 1…9, letters and arrows select; releasing Caps opens.
+state.reset()
+capsDown()
+_ = state.route(key: 49, down: true, repeated: false, bound: false)
+let idleRelease = state.route(key: 79, down: false, repeated: false, bound: false, input: .picker, pickerCount: 9)
+expect(!idleRelease.tap && !idleRelease.openPickerSelection, "releasing Caps after Caps Space leaves the Shelf open")
+_ = state.route(key: 49, down: false, repeated: false, bound: false, input: .picker, pickerCount: 9)
+for (number, key) in [UInt16(18), 19, 20, 21, 23, 22, 26, 28, 25].enumerated() {
+    state.reset()
+    capsDown()
+    let pick = state.route(key: key, down: true, repeated: false, bound: true, input: .picker, pickerCount: 9)
+    expect(pick.swallow && pick.pickerNumber == number && pick.launchKeys == nil && !pick.openPickerSelection,
+           "Caps number selects a row instead of launching a bound app")
+    expect(state.route(key: key, down: true, repeated: true, bound: true, input: .picker, pickerCount: 9).pickerNumber == nil,
+           "number repeats are consumed without selecting again")
+    let release = state.route(key: 79, down: false, repeated: false, bound: false, input: .picker, pickerCount: 9)
+    expect(release.openPickerSelection && !release.tap, "Caps release opens the numbered row")
+    expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .picker, pickerCount: 9).openPickerSelection,
+           "the row opens only once")
+    expect(state.route(key: key, down: false, repeated: false, bound: true).swallow, "the number's release is consumed after the panel closes")
+}
+for count in [0, 1, 8] {
+    state.reset()
+    capsDown()
+    let nine = state.route(key: 25, down: true, repeated: false, bound: false, input: .picker, pickerCount: count)
+    expect(nine.swallow && nine.pickerNumber == nil, "a number past the last row selects nothing")
+    expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .picker, pickerCount: count).openPickerSelection,
+           "a number past the last row opens nothing")
+}
+state.reset()
+capsDown()
+_ = state.route(key: 18, down: true, repeated: false, bound: false, input: .picker, pickerCount: 1)
+_ = state.route(key: 25, down: true, repeated: false, bound: false, input: .picker, pickerCount: 1)
+expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .picker, pickerCount: 1).openPickerSelection,
+       "an invalid number cancels the valid one before it")
+for releaseLetterFirst in [false, true] {
+    state.reset()
+    capsDown()
+    let jump = state.route(key: 2, down: true, repeated: false, bound: true, input: .picker, pickerCount: 4)
+    expect(jump.swallow && jump.pickerJump == 2 && jump.launchKeys == nil, "Caps D jumps in the Shelf without typing D")
+    let repeating = state.route(key: 2, down: true, repeated: true, bound: false, input: .picker, pickerCount: 4)
+    expect(repeating.swallow && repeating.pickerJump == nil, "held letter repeats do not jump again")
+    if releaseLetterFirst {
+        expect(state.route(key: 2, down: false, repeated: false, bound: false, input: .picker).swallow, "letter release before Caps is consumed")
+    }
+    expect(state.route(key: 79, down: false, repeated: false, bound: false, input: .picker, pickerCount: 4).openPickerSelection,
+           "Caps release opens the row jumped to")
+    if !releaseLetterFirst {
+        expect(state.route(key: 2, down: false, repeated: false, bound: false, input: .picker).swallow, "letter release after Caps is consumed")
+    }
+    let typing = state.route(key: 2, down: true, repeated: false, bound: false, input: .picker)
+    expect(!typing.swallow && typing.pickerJump == nil, "without Caps, typing reaches the search")
+}
+state.reset()
+capsDown()
+let arrow = state.route(key: 125, down: true, repeated: false, bound: true, windowKey: true, input: .picker, pickerCount: 3)
+expect(!arrow.swallow && arrow.window == nil && arrow.windowPreview == nil, "Caps arrows move the Shelf selection, not the window")
+expect(state.route(key: 79, down: false, repeated: false, bound: false, input: .picker, pickerCount: 3).openPickerSelection,
+       "Caps release opens the row moved to")
+state.reset()
+capsDown()
+_ = state.route(key: 125, down: true, repeated: false, bound: false, otherModifier: true, input: .picker, pickerCount: 3)
+expect(!state.route(key: 79, down: false, repeated: false, bound: false, input: .picker, pickerCount: 3).openPickerSelection,
+       "Control/Option arrows do not arm opening")
+state.reset()
+capsDown()
+state.modifierChanged(otherModifier: false, commandModifier: true)
+let commandNumber = state.route(key: 20, down: true, repeated: false, bound: true, commandModifier: true, input: .picker, pickerCount: 9)
+expect(commandNumber.pickerNumber == 2, "Command-held Caps numbers still select")
+let commandKey = state.route(key: 0, down: false, repeated: false, bound: false, commandModifier: true, input: .picker, pickerCount: 9)
+expect(commandKey.stripCommandModifier, "Command is stripped from keys the picker takes while Caps is held")
+expect(state.route(key: 79, down: false, repeated: false, bound: false, commandModifier: true, input: .picker, pickerCount: 9).openPickerSelection,
+       "Caps release opens even with Command held")
+expect(!state.route(key: 0, down: true, repeated: false, bound: false, commandModifier: true, input: .picker).stripCommandModifier,
+       "without Caps, the panel's Command shortcuts keep Command")
+state.reset()
+capsDown()
+let tapInPicker = state.route(key: 79, down: false, repeated: false, bound: false, input: .picker, pickerCount: 3)
+expect(tapInPicker.tap && !tapInPicker.openPickerSelection, "Caps alone in the Shelf switches input without opening")
+state.reset()
+capsDown()
+expect(state.route(key: 18, down: true, repeated: false, bound: true).pickerNumber == nil && releaseCaps().launchKeys == [18],
+       "outside the Shelf, Caps numbers launch their apps")
+state.reset()
+print("PASS: Shelf picker numbers, bounds, letters, arrows, Command, release confirmation, app shortcut isolation")
+
+// The Shelf: newest first, re-adding moves up, opening moves up, and only missing
+// files leave by themselves.
+do {
+    let day: TimeInterval = 24 * 60 * 60
+    let start = Date(timeIntervalSinceReferenceDate: 1_000_000)
+    var shelf: [ShelfEntry] = []
+    expect(Shelf.add(["/a/One.pdf", "/b/Two.txt", "/a/One.pdf"], to: &shelf, at: start) == ["/a/One.pdf", "/b/Two.txt"],
+           "duplicates in one add are dropped")
+    expect(shelf.map { $0.path } == ["/a/One.pdf", "/b/Two.txt"], "added files go on top, in order")
+    Shelf.add(["/c/Three.key"], to: &shelf, at: start + day)
+    expect(shelf.map { $0.path } == ["/c/Three.key", "/a/One.pdf", "/b/Two.txt"], "newer files come first")
+    Shelf.add(["/b/Two.txt"], to: &shelf, at: start + 2 * day)
+    expect(shelf.map { $0.path } == ["/b/Two.txt", "/c/Three.key", "/a/One.pdf"] && shelf[0].added == start,
+           "re-adding a file moves it up and keeps when it was first added")
+    Shelf.markUsed(["/a/One.pdf", "/elsewhere"], in: &shelf, at: start + 3 * day)
+    expect(shelf.map { $0.path } == ["/a/One.pdf", "/b/Two.txt", "/c/Three.key"], "opening moves a file up; unknown paths are ignored")
+    expect(!Shelf.prune(&shelf, exists: { _ in true }) && shelf.count == 3, "files never leave for their age")
+    expect(Shelf.prune(&shelf, exists: { $0 != "/b/Two.txt" }) && shelf.map { $0.path } == ["/a/One.pdf", "/c/Three.key"],
+           "a file that no longer exists leaves")
+    let saved = try JSONDecoder().decode([ShelfEntry].self, from: JSONEncoder().encode(shelf))
+    expect(saved == shelf, "Shelf entries round-trip")
+
+    expect(Shelf.rank("Q3 Report.pdf", query: "rep") == 0, "a word start matches first")
+    expect(Shelf.rank("Q3 Report.pdf", query: "qr") == 1, "word initials match")
+    expect(Shelf.rank("Q3 Report.pdf", query: "port") == 2, "the middle of a word matches last")
+    expect(Shelf.rank("Q3 Report.pdf", query: "xyz") == nil, "unrelated text does not match")
+    expect(Shelf.rank("MyNotes.md", query: "notes") == 0 && Shelf.rank("Résumé.pages", query: "resume") == 0,
+           "camel case and accents")
+    expect(Shelf.rank("季度报告.pdf", query: "baogao") == 0 && Shelf.rank("季度报告.pdf", query: "bao'gao") == 0,
+           "Chinese names match by pinyin")
+    expect(Shelf.rank("季度报告.pdf", query: "jdbg") == 1 && Shelf.rank("季度报告.pdf", query: "报告") == 0,
+           "pinyin initials and the characters themselves")
+    expect(Shelf.ordered(["Draft.txt", "Old report.txt", "Report.pdf"], query: "rep") == [1, 2],
+           "equal matches keep Shelf order")
+    expect(Shelf.ordered(["a", "b"], query: " ") == [0, 1], "an empty search shows every file")
+}
+print("PASS: Shelf order, re-adding, opening, no expiry, missing files, search")
 
 expect(FolderEntry(name: "projects", path: "/tmp/projects").originalName == "projects"
        && !FolderEntry(name: "projects", path: "/tmp/projects").isRenamed
@@ -588,7 +738,7 @@ print("PASS: 256 batch-open failure combinations, selection order, aggregated er
 
 // The same standalone rule applies to normal apps and focused input (recording,
 // confirmation, editors). Only chord actions depend on context.
-for input in [KeyboardState.Input.shortcuts, .inactive] {
+for input in [KeyboardState.Input.shortcuts, .picker, .inactive] {
     state.reset()
     _ = state.route(key: 79, down: true, repeated: false, bound: false, input: input)
     _ = state.route(key: 79, down: true, repeated: true, bound: false, input: input)

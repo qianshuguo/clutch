@@ -523,8 +523,8 @@ siteList.table.selectRowIndexes(IndexSet([0, 2]), byExtendingSelection: false)
 siteOwner.removeWebsites()
 expect(siteOwner.websites.map { $0.name } == ["github.com/qianshuguo/clutch"] && siteList.table.selectedRowIndexes == IndexSet(integer: 0),
        "removing selected websites selects the nearest remaining row")
-expect(AppDelegate.preferenceTabs.map { $0.id } == ["general", "apps", "folders", "websites", "windows"],
-       "Websites is its own Preferences page, before Windows")
+expect(AppDelegate.preferenceTabs.map { $0.id } == ["general", "apps", "folders", "websites", "windows", "shelf"],
+       "Websites is its own Preferences page, before Windows; Shelf comes last")
 if let data = savedWebsites { UserDefaults.standard.set(data, forKey: DefaultsKey.websites) }
 else { UserDefaults.standard.removeObject(forKey: DefaultsKey.websites) }
 print("PASS: Websites list, names, shared shortcuts, adding, editing and removing")

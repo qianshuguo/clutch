@@ -5,23 +5,32 @@ extension AppDelegate {
     static var listScrollbarWidth: CGFloat { NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) }
     // Two fixed columns: `title` (Application, Name, Action) and Shortcut. The shortcut
     // field is right-aligned in its column, so a wider first column (`nameWidth`) gives
-    // names more room without moving the field or the Shortcut header.
-    func configureList(_ list: NSTableView, width: CGFloat, title: String, nameWidth: CGFloat = 244) {
+    // names more room without moving the field or the Shortcut header. Without
+    // `shortcuts` (the Shelf) the first column is the only one and fills the list.
+    func configureList(_ list: NSTableView, width: CGFloat, title: String, nameWidth: CGFloat = 244,
+                       shortcuts: Bool = true) {
         // Plain rows keep the same margins when AppKit switches scroller styles.
         list.style = .plain
         let scrollbarWidth = Self.listScrollbarWidth
         let first = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         first.title = title
-        first.minWidth = 110
-        first.maxWidth = max(width - 190, nameWidth)
-        first.width = nameWidth
         first.resizingMask = []
-        let second = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("shortcut"))
-        second.title = "Shortcut"
-        second.minWidth = min(190, width - nameWidth - scrollbarWidth)
-        second.width = width - first.width - scrollbarWidth
-        second.resizingMask = []
-        for column in [first, second] { list.addTableColumn(column) }
+        if shortcuts {
+            first.minWidth = 110
+            first.maxWidth = max(width - 190, nameWidth)
+            first.width = nameWidth
+            let second = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("shortcut"))
+            second.title = "Shortcut"
+            second.minWidth = min(190, width - nameWidth - scrollbarWidth)
+            second.width = width - first.width - scrollbarWidth
+            second.resizingMask = []
+            for column in [first, second] { list.addTableColumn(column) }
+        } else {
+            first.minWidth = width - scrollbarWidth
+            first.maxWidth = width - scrollbarWidth
+            first.width = width - scrollbarWidth
+            list.addTableColumn(first)
+        }
         list.headerView = nil
         // Leave the trailing header lane unadorned.
         list.cornerView = nil
@@ -109,10 +118,11 @@ extension AppDelegate {
     // A Preferences list page's table, configured by configureList, in a scroll view
     // between the column header and the bottom bar. Returns the scroll view.
     @discardableResult
-    func addList(_ table: NSTableView, to page: NSView, title: String, nameWidth: CGFloat = 244) -> NSScrollView {
+    func addList(_ table: NSTableView, to page: NSView, title: String, nameWidth: CGFloat = 244,
+                 shortcuts: Bool = true) -> NSScrollView {
         let size = page.bounds.size
         let scroll = makeListScroll(size: size, headerHeight: 28)
-        configureList(table, width: size.width, title: title, nameWidth: nameWidth)
+        configureList(table, width: size.width, title: title, nameWidth: nameWidth, shortcuts: shortcuts)
         scroll.documentView = table
         scroll.tile()
         page.addSubview(scroll)
@@ -164,16 +174,19 @@ extension AppDelegate {
         return help
     }
 
-    // App List, Folders and Websites: the list between its column header and a bottom bar
-    // with + / −, a search field and ?, and a gray label over the list when it has no
-    // entries or the search matches none. Everything these pages share is built here;
-    // the spec holds only what differs. Windows has fixed actions and builds its own page.
+    // App List, Folders, Websites and Shelf: the list between its column header and a
+    // bottom bar with + / −, a search field and ?, and a gray label over the list when it
+    // has no entries or the search matches none. Everything these pages share is built
+    // here; the spec holds only what differs. Windows has fixed actions and builds its own page.
     func addEntryListPage(_ spec: ListPageSpec, list: SearchableList, to page: NSView) {
         let width = page.bounds.width
-        let scroll = addList(list.listTable, to: page, title: spec.entryName, nameWidth: spec.nameWidth)
+        let scroll = addList(list.listTable, to: page, title: spec.entryName, nameWidth: spec.nameWidth,
+                             shortcuts: spec.shortcutAction != nil)
         addListControls(to: page, width: width, add: spec.add, remove: spec.remove, itemName: spec.entryName)
-        let help = addListHelp([("Caps + key, release Caps", spec.shortcutAction),
-                                ("Set a shortcut", "Hold ⇪ + up to 3 keys")]
+        let shortcutHelp: [HelpButton.Item] = spec.shortcutAction.map {
+            [("Caps + key, release Caps", $0), ("Set a shortcut", "Hold ⇪ + up to 3 keys")]
+        } ?? []
+        let help = addListHelp(shortcutHelp
                                + spec.help
                                + [("⌘F", "Search by name"),
                                   ("Type in the list", "Jump to one by name")],
@@ -207,6 +220,7 @@ extension AppDelegate {
         case "apps": return applicationList
         case "folders": return preferencesFolderList
         case "websites": return websiteList
+        case "shelf": return preferencesShelfList
         default: return nil
         }
     }
@@ -345,8 +359,9 @@ struct ListPageSpec {
     // The empty and no-match labels: "Applications".
     var pluralName: String
     var nameWidth: CGFloat = 244
-    // What Caps + an entry's shortcut does, first in ?: "Switch to the app".
-    var shortcutAction: String
+    // What Caps + an entry's shortcut does, first in ?: "Switch to the app". Nil for a
+    // list without shortcuts (the Shelf): no Shortcut column and no shortcut help.
+    var shortcutAction: String?
     // This page's own ? rows, between the shared ones.
     var help: [HelpButton.Item]
     var add: () -> Void

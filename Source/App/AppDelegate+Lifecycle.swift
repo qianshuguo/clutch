@@ -22,6 +22,7 @@ extension AppDelegate {
         do { try loadBindings() } catch { loadErrors.append(error) }
         do { try loadFolders() } catch { loadErrors.append(error) }
         do { try loadWebsites() } catch { loadErrors.append(error) }
+        do { try loadShelf() } catch { loadErrors.append(error) }
         createMenu()
         item.isVisible = !defaults.bool(forKey: DefaultsKey.hideStatusBarIcon)
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(showSettings), name: reopenNotification, object: nil)

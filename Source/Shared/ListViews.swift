@@ -59,8 +59,18 @@ final class PlainListHeaderView: NSView {
     }
     override func layout() {
         super.layout()
-        guard let table = tableView, table.tableColumns.count == 2 else { return }
+        guard let table = tableView, !table.tableColumns.isEmpty else { return }
+        bottomRule.frame = NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1)
         let firstColumn = table.tableColumns[0]
+        guard table.tableColumns.count == 2 else {
+            // One column (the Shelf): its title only.
+            let body = table.numberOfRows > 0 ? table.frameOfCell(atColumn: 0, row: 0)
+                : NSRect(x: 0, y: 0, width: firstColumn.width, height: 0)
+            firstLabel.stringValue = firstColumn.title
+            secondLabel.stringValue = ""
+            firstLabel.frame = NSRect(x: body.minX + ListGeometry.leadingInset, y: 7, width: max(0, body.width - ListGeometry.leadingInset - ListGeometry.trailingInset), height: 18)
+            return
+        }
         let secondColumn = table.tableColumns[1]
         let firstBody = table.numberOfRows > 0 ? table.frameOfCell(atColumn: 0, row: 0)
             : NSRect(x: 0, y: 0, width: firstColumn.width, height: 0)
@@ -71,12 +81,18 @@ final class PlainListHeaderView: NSView {
         firstLabel.frame = NSRect(x: firstBody.minX + ListGeometry.leadingInset, y: 7, width: max(0, firstBody.width - ListGeometry.leadingInset - ListGeometry.trailingInset), height: 18)
         let secondX = secondBody.maxX - ListGeometry.shortcutRecorderWidth - ListGeometry.labelTextInset
         secondLabel.frame = NSRect(x: secondX, y: 7, width: max(0, secondBody.maxX - secondX), height: 18)
-        bottomRule.frame = NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1)
     }
 }
 
 final class InsetListRowView: NSTableRowView {
     static let selectionInset: CGFloat = 6
+    // The Shelf picker keeps focus in its search field, so its list never has focus;
+    // its selection still uses the accent color.
+    var alwaysEmphasized = false
+    override var isEmphasized: Bool {
+        get { alwaysEmphasized || super.isEmphasized }
+        set { super.isEmphasized = newValue }
+    }
     override func drawSelection(in dirtyRect: NSRect) {
         let inset = Self.selectionInset
         // The viewport already excludes a visible legacy scrollbar. Hidden overlay
@@ -177,10 +193,13 @@ final class EntryTableView: NSTableView {
         let open = NSMenuItem(title: "Open", action: #selector(openSelected), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        let edit = NSMenuItem(title: "Edit…", action: #selector(editSelected), keyEquivalent: "")
-        edit.target = self
-        edit.isEnabled = selectedRowIndexes.count == 1
-        menu.addItem(edit)
+        // Lists whose entries have nothing to edit (the Shelf) leave Edit… out.
+        if editSelection != nil {
+            let edit = NSMenuItem(title: "Edit…", action: #selector(editSelected), keyEquivalent: "")
+            edit.target = self
+            edit.isEnabled = selectedRowIndexes.count == 1
+            menu.addItem(edit)
+        }
         if revealSelection != nil {
             menu.addItem(.separator())
             let reveal = NSMenuItem(title: "Reveal in Finder", action: #selector(revealSelected), keyEquivalent: "")

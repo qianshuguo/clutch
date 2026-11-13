@@ -30,6 +30,15 @@ extension AppDelegate: NSWindowDelegate {
         if !closingPreferencesForAction { state.cancelGesture() }
     }
     func windowWillClose(_ notification: Notification) {
+        if let closed = notification.object as? NSWindow, closed === shelfPanel {
+            // Built again on the next Caps + Space.
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.shelfPanel === closed, !closed.isVisible else { return }
+                self.shelfPanel = nil; self.shelfList = nil
+                self.hideDockIfIdle()
+            }
+            return
+        }
         guard let closed = notification.object as? NSWindow, closed === window else { return }
         // Drop the settings view tree while the menu-bar utility runs in the background.
         DispatchQueue.main.async { [weak self] in
@@ -38,7 +47,8 @@ extension AppDelegate: NSWindowDelegate {
             self.window = nil; self.applicationList = nil; self.preferencesFolderList = nil
             self.toggleButton = nil; self.loginCheckbox = nil; self.hideCheckbox = nil
             self.askBeforeOpeningCheckbox = nil
-            self.accessibilityHint = nil; self.accessibilityNotice = nil; self.windowShortcutList = nil; self.websiteList = nil; self.pages = []
+            self.accessibilityHint = nil; self.accessibilityNotice = nil; self.windowShortcutList = nil; self.websiteList = nil
+            self.preferencesShelfList = nil; self.pages = []
         }
     }
 }

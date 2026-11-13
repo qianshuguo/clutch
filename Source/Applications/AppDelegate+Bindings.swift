@@ -223,14 +223,14 @@ extension AppDelegate {
         if websitesChanged { saveWebsites() }
         if windowsChanged { saveWindowShortcuts() }
     }
-    // Caps + Space is kept free, Caps + Delete takes back a key and Caps + Return
+    // Caps + Space opens the Shelf, Caps + Delete takes back a key and Caps + Return
     // confirms, so no list can take them. A window action can take Delete: it is a
     // single key, so there is nothing to take back.
     func shortcutKeyAvailable(_ code: UInt16, for owner: ShortcutOwner) -> Bool {
         if code == KeyCode.delete && owner.isWindow { return true }
         guard code == KeyCode.space || code == KeyCode.delete || KeyCode.isReturn(code) else { return true }
         NSSound.beep()
-        let use = code == KeyCode.space ? ""
+        let use = code == KeyCode.space ? " for the Shelf"
             : code == KeyCode.delete ? " for taking back keys while Caps is held" : " for confirming"
         logStatus("\(shortcutLabel([code])) is reserved\(use). Choose another key.")
         return false

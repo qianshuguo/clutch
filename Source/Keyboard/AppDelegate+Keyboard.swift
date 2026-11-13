@@ -143,9 +143,16 @@ extension AppDelegate {
         lastKeyEventUptime = now
         // Context controls only chord actions. Standalone Caps always follows
         // the same state machine and system replay path. The launch confirmation and
-        // a recording field take keys as their own input.
+        // a recording field take keys as their own input; the focused Shelf picker takes
+        // Caps + numbers, letters and arrows as selection, and the rest of a Shelf with
+        // focus elsewhere (its context menu) is focused input too.
         let recorder = activeRecorder
-        let input: KeyboardState.Input = showingLaunchConfirmation || recorder != nil ? .inactive : .shortcuts
+        let picker = shelfSelectionPanel
+        let input: KeyboardState.Input
+        if showingLaunchConfirmation || recorder != nil { input = .inactive }
+        else if picker != nil { input = .picker }
+        else if shelfPanel?.isKeyWindow == true { input = .inactive }
+        else { input = .shortcuts }
         let shortcutsEnabled = input == .shortcuts
         let otherModifier = !event.flags.intersection([.maskControl, .maskAlternate]).isEmpty
         let commandModifier = event.flags.contains(.maskCommand)
@@ -173,14 +180,36 @@ extension AppDelegate {
                                  repeated: repeated, bound: bound, prefix: prefix,
                                  windowKey: windowKey,
                                  otherModifier: otherModifier, commandModifier: commandModifier,
-                                 input: input)
+                                 input: input,
+                                 // Rows shown, so a search with no matches opens nothing.
+                                 pickerCount: shelfList?.table.numberOfRows ?? 0)
         }
         updateLaunchHint(shortcutsEnabled: shortcutsEnabled)
         // While a field records, Caps is input to the field, not a Caps Lock toggle.
-        updateCapsHUD(shortcutsEnabled: shortcutsEnabled, recording: recorder != nil)
+        updateCapsHUD(shortcutsEnabled: shortcutsEnabled, recording: recorder != nil, openingPicker: result.showPicker)
         if routeCapsRecording(type, key: key, to: recorder, capsWasHeld: capsWasHeld, repeated: repeated, flags: event.flags) {
             return nil
         }
+        if result.showPicker {
+            performOnMainRunLoop { [weak self] in self?.showShelf() }
+        }
+        if picker != nil, key == KeyCode.hyper, type == .keyDown, !capsWasHeld {
+            performOnMainRunLoop { [weak self] in self?.shelfList?.resetJump() }
+        }
+        if let panel = picker, result.pickerNumber != nil || result.pickerJump != nil || result.openPickerSelection {
+            performOnMainRunLoop { [weak self, weak panel] in
+                guard let self = self, let panel = panel, self.shelfSelectionPanel === panel,
+                      let list = self.shelfList else { return }
+                if let number = result.pickerNumber {
+                    list.resetJump()
+                    list.select(row: number)
+                }
+                if let key = result.pickerJump { list.jump(key: key, time: now) }
+                if result.openPickerSelection { panel.openSelection?() }
+            }
+        }
+        // Other keys go to the focused view's native navigation and editing commands.
+        if result.stripCommandModifier { event.flags.remove(.maskCommand) }
         if result.tap && recorder == nil {
             performOnMainRunLoop { [weak self] in
                 guard let self = self else { return }
@@ -209,11 +238,15 @@ extension AppDelegate {
     // Called for every key event after the launch hint. One HUD window, resizing: the
     // keys pressed so far ("⇪ M W") with "No matching app"; or, when they select an app,
     // grown into the app card (updateLaunchHint) with the keys on top. Caps held
-    // alone shows nothing: the keyboard light shows Caps Lock.
-    func updateCapsHUD(shortcutsEnabled: Bool, recording: Bool) {
-        // The launch confirmation needs no Caps hint, and a window action shows its own preview.
-        let hidden = recording || showingLaunchConfirmation || state.windowGesture
-        if !hidden && shortcutsEnabled && state.showsKeyHint {
+    // alone shows nothing: the keyboard light shows Caps Lock. Caps + Space hides the
+    // pill at once as the Shelf opens.
+    func updateCapsHUD(shortcutsEnabled: Bool, recording: Bool, openingPicker: Bool = false) {
+        // The launch confirmation needs no Caps hint, the open Shelf has its search field
+        // where the pill would be, and a window action shows its own preview.
+        let hidden = recording || showingLaunchConfirmation || shelfPanel?.isVisible == true || state.windowGesture
+        if openingPicker {
+            capsOverlay.hideKeys(immediately: true)
+        } else if !hidden && shortcutsEnabled && state.showsKeyHint {
             // The overlay updates its one window after the key event, together with
             // the app from updateLaunchHint.
             capsOverlay.showKeys(state.pressedKeys.map { keyName($0) ?? "?" }.joined(separator: " "))

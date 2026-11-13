@@ -1,13 +1,14 @@
 import Cocoa
 
 // Shared application state. Feature behavior is implemented in the extensions
-// under App, Keyboard, Applications, Folders, Websites, Preferences, and Shared.
+// under App, Keyboard, Applications, Folders, Shelf, Websites, Preferences, and Shared.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static let preferenceTabs = [(id: "general", title: "General", symbol: "gearshape"),
                                  (id: "apps", title: "App List", symbol: "list.bullet.rectangle"),
                                  (id: "folders", title: "Folders", symbol: "folder"),
                                  (id: "websites", title: "Websites", symbol: "globe"),
-                                 (id: "windows", title: "Windows", symbol: "macwindow")]
+                                 (id: "windows", title: "Windows", symbol: "macwindow"),
+                                 (id: "shelf", title: "Shelf", symbol: "tray.full")]
     // Exactly fits the Windows list without scrolling: its rows plus the list chrome
     // from makeListScroll (33 bottom bar, 28 header, 6 + 6 spacing). 7 rows → 311.
     static let preferenceSize = NSSize(width: 460, height: 73 + CGFloat(WindowCommand.allCases.count) * appRowHeight)
@@ -52,6 +53,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var preferencesFolderList: FolderListController?
     var folders: [FolderEntry] = []
     let folderDragType = NSPasteboard.PasteboardType("local.maxvoid.Clutch.folder")
+    // Caps + Space: the Shelf picker and its files, newest first; also the Shelf page.
+    var shelf: [ShelfEntry] = []
+    var shelfPanel: ShelfPanel?
+    var shelfList: ShelfListController?
+    var preferencesShelfList: ShelfPreferencesListController?
     var websites: [WebsiteEntry] = []
     var websiteList: WebsiteListController?
     let browserTabs = BrowserTabs()

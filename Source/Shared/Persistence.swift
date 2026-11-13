@@ -6,6 +6,7 @@ enum DefaultsKey {
     static let shortcuts = "Bindings"
     static let folders = "Folders"
     static let websites = "Websites"
+    static let shelf = "Shelf"
     static let windowShortcuts = "WindowShortcuts"
     static let hideStatusBarIcon = "HideStatusBarIcon"
     static let capsMappingRecovery = "CapsMappingRecovery"

@@ -5,6 +5,7 @@ import Foundation
 // Foundation-only, so the pure keyboard tests can compile it.
 enum KeyCode {
     static let s: UInt16 = 1
+    static let v: UInt16 = 9
     static let w: UInt16 = 13
     static let returnKey: UInt16 = 36
     // Delete (⌫) while Caps is held takes back the last key, when using a shortcut and
@@ -15,6 +16,8 @@ enum KeyCode {
     static let escape: UInt16 = 53
     static let keypadEnter: UInt16 = 76
     static let hyper: UInt16 = 79 // F18
+    // Arrows, Home, End, Page Up, Page Down.
+    static let navigation: [UInt16] = [123, 124, 125, 126, 115, 119, 116, 121]
 
     static func isReturn(_ code: UInt16) -> Bool { code == returnKey || code == keypadEnter }
 }
@@ -26,6 +29,12 @@ let keys: [(String, UInt16)] = [
     ("V",9),("W",13),("X",7),("Y",16),("Z",6),
     ("0",29),("1",18),("2",19),("3",20),("4",21),("5",23),
     ("6",22),("7",26),("8",28),("9",25)]
+
+extension KeyCode {
+    static let lettersAndDigits: [UInt16] = keys.map { $0.1 }
+    // Top-row 1…9, in order; index 0 selects the first row.
+    static let digits1to9: [UInt16] = (1...9).map { digit in keys.first { $0.0 == String(digit) }!.1 }
+}
 
 // The stored value for "no key" in saved App List and Windows shortcuts.
 let unassignedKey: UInt16 = .max

@@ -18,6 +18,7 @@ extension AppDelegate: NSMenuItemValidation {
         add("Preferences", #selector(showSettings), ",")
         add("Close Window", #selector(closeSettings), "w", hidden: true)
         add("Find", #selector(findInList), "f", hidden: true)
+        add("Shelf…", #selector(showShelf), "")
         let toggleItem = add("Enable Clutch", #selector(toggle), "s")
         menu.addItem(.separator())
         add("Quit Clutch", #selector(quitApp), "q")
@@ -49,7 +50,7 @@ extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggle) { updateToggleMenuTitle() }
         if menuItem.action == #selector(findInList) { return visibleEntryList != nil }
-        if menuItem.action == #selector(closeSettings) { return window?.isVisible == true }
+        if menuItem.action == #selector(closeSettings) { return window?.isVisible == true || shelfPanel?.isVisible == true }
         return true
     }
     // Brings the toggle title and Preferences controls up to date with the enabled state.

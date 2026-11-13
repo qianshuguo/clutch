@@ -4,21 +4,27 @@ import Foundation
 // is released: hold Caps, press one key (Caps + F) or up to three keys in order
 // (Caps + M + W, Caps + M + W + E), release Caps, or press Return to run it at once.
 // Keys after the third are ignored. The keys may be released before Caps. Releasing Caps decides what was meant, so keys can open an app by themselves
-// and also start longer shortcuts. Window keys preview while Caps is held: each press
-// updates the preview, releasing Caps applies it.
+// and also start longer shortcuts. Caps + Space (Shelf) opens on press, even after other
+// keys. Window keys preview while Caps is held: each press updates the preview,
+// releasing Caps applies it.
 struct KeyboardState {
     // Keys one app shortcut may use after Caps.
     static let maxShortcutKeys = 3
     // Who gets keys pressed while Caps is held.
     enum Input {
-        // Caps shortcuts (App List, Folders, Websites, window actions).
+        // Caps shortcuts (App List, Folders, Websites, window actions, Caps + Space).
         case shortcuts
+        // The focused Shelf picker: numbers, letters and navigation select a file.
+        case picker
         // Clutch's own focused input (a shortcut being recorded, the launch
         // confirmation, renaming): keys pass through and run no shortcut.
         case inactive
     }
     struct Result {
         var swallow = false
+        // Caps + letters and numbers in the picker reach it without Command, so they
+        // select instead of running the picker's own Command shortcuts.
+        var stripCommandModifier = false
         // Caps was pressed and released alone (macOS gets it as the Caps key).
         var tap = false
         // The keys of the App List, Folders or Websites shortcut to run, in order.
@@ -27,6 +33,14 @@ struct KeyboardState {
         var window: UInt16?
         // A window key pressed while Caps is held: update the preview.
         var windowPreview: UInt16?
+        // Caps + Space: open the Shelf picker.
+        var showPicker = false
+        // Releasing Caps in the picker opens its selection (after a number, letter or arrow).
+        var openPickerSelection = false
+        // Caps + 1…9 in the picker: select that row (0-based).
+        var pickerNumber: Int?
+        // Caps + a letter or digit in the picker: jump to a matching row.
+        var pickerJump: UInt16?
     }
     private(set) var held = false
     private(set) var chord = false
@@ -34,9 +48,9 @@ struct KeyboardState {
     private(set) var pressedKeys: [UInt16] = []
     // Escape while Caps is held: this hold does nothing more, and shows nothing.
     private(set) var escaped = false
-    // Show the keys pressed so far ("⇪ M W"): not for gestures with Control/Option/Command,
-    // which run no Caps shortcut, or after Escape.
-    var showsKeyHint: Bool { held && !pressedKeys.isEmpty && !otherModifierGesture && !escaped }
+    // Show the keys pressed so far ("⇪ M W"): not for Caps + Space (Shelf), gestures
+    // with Control/Option/Command, which run no Caps shortcut, or after Escape.
+    var showsKeyHint: Bool { held && !pressedKeys.isEmpty && !pickerGesture && !otherModifierGesture && !escaped }
     // Shortcut keys pressed during this Caps hold, in order.
     private var sequence: [UInt16] = []
     private var sequenceWindow = false   // the first key is a window action
@@ -50,7 +64,7 @@ struct KeyboardState {
     // The app shortcut releasing Caps would run right now (Caps + M, Caps + M + W, …),
     // for the on-screen hint. Mirrors the release rules in route(key:).
     var launchCandidate: [UInt16]? {
-        guard held, sequenceValid, sequenceBound, !sequenceWindow, !otherModifierGesture else { return nil }
+        guard held, sequenceValid, sequenceBound, !sequenceWindow, !otherModifierGesture, !pickerGesture else { return nil }
         return sequence
     }
     // This Caps hold started with a window action key; it stays a window gesture (the
@@ -69,7 +83,10 @@ struct KeyboardState {
     }
     private var steps: [Step] = []
     private var otherModifierGesture = false
+    private var pickerGesture = false
+    private var pickerSelectionEntered = false
     private var consumed = Set<UInt16>()
+    private static let selectionKeys = Set(KeyCode.lettersAndDigits + KeyCode.navigation)
 
     // Raw CGEventFlags device-independent masks, kept numeric so this file
     // stays free of CoreGraphics and remains part of the pure keyboard tests.
@@ -107,8 +124,8 @@ struct KeyboardState {
     }
     // `bound`: `pendingKeys` (none for the first key) followed by this key are exactly an
     // app shortcut. `prefix`: a longer app shortcut starts with those keys.
-    mutating func route(key: UInt16, down: Bool, repeated: Bool, bound: Bool, prefix: Bool = false, windowKey: Bool = false, otherModifier: Bool = false, commandModifier: Bool = false, input: Input = .shortcuts) -> Result {
-        let shortcuts = input == .shortcuts
+    mutating func route(key: UInt16, down: Bool, repeated: Bool, bound: Bool, prefix: Bool = false, windowKey: Bool = false, otherModifier: Bool = false, commandModifier: Bool = false, input: Input = .shortcuts, pickerCount: Int = 0) -> Result {
+        let shortcuts = input == .shortcuts, picker = input == .picker
         if key == KeyCode.hyper {
             if down {
                 // An autorepeat without a tracked press belongs to a gesture that was
@@ -116,6 +133,7 @@ struct KeyboardState {
                 // standalone gesture, or releasing Caps would send a Caps press.
                 if !held && !repeated {
                     held = true; chord = false; otherModifierGesture = otherModifier || commandModifier
+                    pickerGesture = false; pickerSelectionEntered = false
                     pressedKeys = []
                     escaped = false
                     clearSequence()
@@ -124,11 +142,13 @@ struct KeyboardState {
             }
             let standalone = held && !chord && !otherModifierGesture
             var result = Result(swallow: true, tap: standalone)
+            result.openPickerSelection = held && picker && pickerSelectionEntered
             // Releasing Caps runs the shortcut that was pressed.
             if shortcuts { addShortcutActions(to: &result) }
             clearSequence()
             held = false
             pressedKeys = []
+            pickerSelectionEntered = false
             return result
         }
         // Only a new key press makes a chord. A release of a key that was still
@@ -137,7 +157,8 @@ struct KeyboardState {
         let pressedBefore = pressedKeys
         if down && held && !repeated && pressedKeys.count < Self.maxShortcutKeys
             && key != KeyCode.escape && key != KeyCode.delete && !KeyCode.isReturn(key) { pressedKeys.append(key) }
-        if !down { return Result(swallow: consumed.remove(key) != nil) }
+        let stripCommand = held && picker && commandModifier && !otherModifier
+        if !down { return Result(swallow: consumed.remove(key) != nil, stripCommandModifier: stripCommand) }
         if consumed.contains(key) { return Result(swallow: true) }
         // Own all new keyboard input destined for the original app during Caps,
         // including invalid shortcuts, repeats and modified/cancelled gestures.
@@ -145,6 +166,38 @@ struct KeyboardState {
         // The shortcut branches below all require this, so they need not insert again.
         let takeOver = held && shortcuts
         if takeOver { consumed.insert(key) }
+        // Caps + Space opens the Shelf, whenever Space comes during the hold: it takes
+        // over from any shortcut or window preview started before it, so nothing else
+        // runs on release. Its repeats and release stay consumed. When blocked (Control,
+        // Option or Command, or after Escape), Space is consumed without an action.
+        if shortcuts && held && key == KeyCode.space && !repeated
+            && !otherModifierGesture && !otherModifier && !commandModifier && !pickerGesture && !escaped {
+            pickerGesture = true
+            sequenceValid = false
+            return Result(swallow: true, showPicker: true)
+        }
+        if held && picker && !otherModifier {
+            // Caps + 1…9 selects a row; a number past the last row selects nothing and
+            // must not confirm the row selected before it.
+            if let number = KeyCode.digits1to9.firstIndex(of: key) {
+                consumed.insert(key)
+                guard !repeated else { return Result(swallow: true) }
+                pickerSelectionEntered = number < pickerCount
+                var result = Result(swallow: true)
+                result.pickerNumber = pickerSelectionEntered ? number : nil
+                return result
+            }
+            // Only deliberate list navigation arms opening on Caps release.
+            if Self.selectionKeys.contains(key) { pickerSelectionEntered = pickerCount > 0 }
+            // While Caps stays held, letters jump to a row rather than reaching the
+            // search field or its input method. Their releases are owned too.
+            if KeyCode.lettersAndDigits.contains(key) {
+                consumed.insert(key)
+                var result = Result(swallow: true)
+                result.pickerJump = repeated ? nil : key
+                return result
+            }
+        }
         // Escape cancels the whole Caps gesture: nothing runs on release (a window
         // preview is dropped) and the key does not reach the app.
         if key == KeyCode.escape && held && shortcuts && !repeated {
@@ -163,8 +216,8 @@ struct KeyboardState {
             return result
         }
         let actionAllowed = shortcuts && held && !repeated && !escaped
-            && !otherModifierGesture && !otherModifier && !commandModifier
-        guard actionAllowed else { return Result(swallow: takeOver) }
+            && !otherModifierGesture && !otherModifier && !commandModifier && !pickerGesture
+        guard actionAllowed else { return Result(swallow: takeOver, stripCommandModifier: stripCommand) }
         // Delete takes back the last app key, valid or not; with none it does nothing.
         // As the first key it is a window action when one uses it (Restore by default),
         // and in a window gesture it is an ordinary key (a window key, or it cancels).
@@ -220,7 +273,7 @@ struct KeyboardState {
     // What ending this hold (Caps release, or Return) runs: the window action or the
     // app shortcut pressed, if any.
     private func addShortcutActions(to result: inout Result) {
-        guard held && sequenceValid && !sequence.isEmpty && !otherModifierGesture else { return }
+        guard held && sequenceValid && !sequence.isEmpty && !otherModifierGesture && !pickerGesture else { return }
         if sequenceWindow {
             result.window = sequence[0]
         } else if sequenceBound {
