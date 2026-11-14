@@ -11,10 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // The Windows list's rows plus the list chrome (ListGeometry.chromeHeight), and one
     // more row of room so General is not crowded. 7 + 1 rows → 345.
     static let preferenceSize = NSSize(width: 460, height: ListGeometry.chromeHeight + CGFloat(WindowCommand.allCases.count + 1) * appRowHeight)
-    // The Shelf picker's list, which has no column header: 8 rows above the bottom bar → 311.
+    // The Shelf picker's list, which has no column header or bottom bar: 8 rows and a gap → 278.
     static let shelfRows = 8
-    static let shelfListSize = NSSize(width: 460, height: ListGeometry.bottomBarHeight + ListGeometry.bottomRuleHeight
-                                                          + ListGeometry.spacing + CGFloat(shelfRows) * appRowHeight)
+    static let shelfListSize = NSSize(width: 460, height: ListGeometry.spacing + CGFloat(shelfRows) * appRowHeight)
     static let appRowHeight: CGFloat = 34
     static let listIconFrame = NSRect(x: ListGeometry.leadingInset, y: 7, width: 20, height: 20)
     static let listNameFrame = NSRect(x: ListGeometry.leadingInset + 28, y: 7, width: 172, height: 18)

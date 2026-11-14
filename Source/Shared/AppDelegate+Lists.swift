@@ -110,9 +110,10 @@ extension AppDelegate {
         cell.addSubview(recorder)
         return recorder
     }
-    func makeListScroll(size: NSSize, headerHeight: CGFloat = 0) -> NSScrollView {
+    // Without a bottom bar (the Shelf picker), the rows end a gap above the bottom edge.
+    func makeListScroll(size: NSSize, headerHeight: CGFloat = 0, bottomBar: Bool = true) -> NSScrollView {
         let headerSpacing: CGFloat = headerHeight > 0 ? ListGeometry.spacing : 0
-        let footer = ListGeometry.bottomBarHeight + ListGeometry.bottomRuleHeight + ListGeometry.spacing
+        let footer = (bottomBar ? ListGeometry.bottomBarHeight + ListGeometry.bottomRuleHeight : 0) + ListGeometry.spacing
         let scroll = NSScrollView(frame: NSRect(x: 0, y: footer,
                                                 width: size.width,
                                                 height: size.height - footer - headerHeight - headerSpacing))

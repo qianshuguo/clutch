@@ -1,8 +1,8 @@
 import Cocoa
 
 // The Shelf picker (Caps + Space): a search field where the Caps pill sits, the
-// Shelf's files below, in the user's order (new files on top), and a line of keys at the
-// bottom. Typing filters; ↑/↓ move, Return opens, ⌘Return reveals in Finder, ⌘⌫ takes
+// Shelf's files below, in the user's order (new files on top); the right-click menu shows
+// the keys. Typing filters; ↑/↓ move, Return opens, ⌘Return reveals in Finder, ⌘⌫ takes
 // the file off the Shelf (the file itself stays). Files are added by pasting files copied
 // in Finder (⌘V) or dropping them on the panel; rows are dragged within the list to
 // reorder them, or out, to attach a file somewhere.
@@ -77,16 +77,19 @@ final class ShelfTableView: NSTableView {
     override func menu(for event: NSEvent) -> NSMenu? {
         // The search field keeps focus while the menu is open.
         guard ListSelection.selectForMenu(event, in: self, focus: false) != nil else { return nil }
+        // The key equivalents only show the shortcuts; the panel and the search field
+        // handle the keys themselves.
         let menu = NSMenu()
-        for (title, action) in [("Open", #selector(openSelected)), ("Reveal in Finder", #selector(revealSelected))] {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        func add(_ title: String, _ action: Selector, key: String, modifiers: NSEvent.ModifierFlags) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            item.keyEquivalentModifierMask = modifiers
             item.target = self
             menu.addItem(item)
         }
+        add("Open", #selector(openSelected), key: "\r", modifiers: [])
+        add("Reveal in Finder", #selector(revealSelected), key: "\r", modifiers: .command)
         menu.addItem(.separator())
-        let remove = NSMenuItem(title: "Remove from Shelf", action: #selector(removeSelected), keyEquivalent: "")
-        remove.target = self
-        menu.addItem(remove)
+        add("Remove from Shelf", #selector(removeSelected), key: "\u{8}", modifiers: .command)
         return menu
     }
     @objc func openSelected() { openSelection?() }

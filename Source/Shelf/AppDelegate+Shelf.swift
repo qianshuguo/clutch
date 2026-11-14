@@ -55,8 +55,8 @@ extension AppDelegate {
         let controller = ShelfListController(owner: self)
         let shell = ListSurface(frame: NSRect(origin: .zero, size: panelSize))
 
-        // The list between the search field and the key hints.
-        let scroll = makeListScroll(size: listSize)
+        // The list below the search field.
+        let scroll = makeListScroll(size: listSize, bottomBar: false)
         let table = controller.table
         styleList(table)
         // Like the other lists: a fixed column that leaves the scrollbar lane free in
@@ -73,16 +73,6 @@ extension AppDelegate {
         shell.addSubview(scroll)
         let empty = addEmptyListLabel("", over: scroll, to: shell)
         controller.emptyLabel = empty
-
-        // What the keys do, in gray, under a divider.
-        addListBottomDivider(to: shell, width: listSize.width)
-        let hints = NSTextField(labelWithString: "↩ Open   ⌘↩ Reveal   ⌘⌫ Remove   ⌘V Add copied files")
-        hints.font = .systemFont(ofSize: 11)
-        hints.textColor = .secondaryLabelColor
-        hints.alignment = .center
-        hints.frame = NSRect(x: 12, y: ListGeometry.bottomBarY(16).rounded(), width: listSize.width - 24, height: 16)
-        hints.autoresizingMask = [.width]
-        shell.addSubview(hints)
 
         // A native search field: system caret, selection and input methods.
         let field = NSSearchField()
