@@ -4,7 +4,7 @@ extension AppDelegate {
     // The Folders page of Preferences: the list with a header and shortcut fields.
     func addFoldersPage(to page: NSView) {
         let controller = FolderListController(owner: self)
-        preferencesFolderList = controller
+        folderList = controller
         let list = controller.table
         list.allowsMultipleSelection = true
         list.registerForDraggedTypes([folderDragType])
@@ -16,14 +16,8 @@ extension AppDelegate {
                    ("Drag a folder", "Change the order"),
                    ("Double-click a folder", "Edit its name and location"),
                    ("Right-click a folder", "Open, edit or reveal it")],
-            add: { [weak self, weak controller] in
-                guard let controller = controller else { return }
-                self?.addFolders(to: controller)
-            },
-            remove: { [weak self, weak controller] in
-                guard let controller = controller else { return }
-                self?.removeFolders(from: controller)
-            }), list: controller, to: page)
+            add: { [weak self] in self?.addFolders() },
+            remove: { [weak self] in self?.removeFolders() }), list: controller, to: page)
     }
     // First-run Folders list, in order. Folders that do not exist are skipped.
     static var defaultFolders: [FolderEntry] {
@@ -42,16 +36,18 @@ extension AppDelegate {
     }
     func saveFolders() {
         StoredList.save(folders, forKey: DefaultsKey.folders)
-        preferencesFolderList?.reload()
+        folderList?.reload()
     }
     // +: the sheet Websites shares (showFieldSheet), with Name and Location; Choose…
     // picks the folder. An empty name uses the folder's own name. A folder already listed
     // is selected instead.
-    func addFolders(to controller: FolderListController) {
-        showFieldSheet(on: controller.table.window, title: "Add Folder",
-                       button: "Add", fields: Self.folderFields(name: "", location: "")) { [weak self, weak controller] values in
-            guard let self = self, let controller = controller else { return }
-            self.addFolder(name: values[0], location: values[1], to: controller)
+    func addFolders() { showAddFolderSheet(name: "", location: "") }
+    private func showAddFolderSheet(name: String, location: String) {
+        showFieldSheet(on: window, title: "Add Folder",
+                       button: "Add", fields: Self.folderFields(name: name, location: location)) { [weak self] values in
+            guard let self = self, !self.addFolder(name: values[0], location: values[1]) else { return }
+            // Not a folder: the sheet comes back with what was typed.
+            DispatchQueue.main.async { self.showAddFolderSheet(name: values[0], location: values[1]) }
         }
     }
     // While Name is empty it shows, in gray, the name of the folder Location names: that
@@ -60,7 +56,7 @@ extension AppDelegate {
         [SheetField(label: "Name", value: name, placeholder: { values in
             values.count > 1 ? AppDelegate.folderDisplayName(forLocation: values[1]) : ""
          }),
-         SheetField(label: "Location", value: location, choosesFolder: true)]
+         SheetField(label: "Location", value: location, choosesFolder: true, required: true)]
     }
     // The name Finder shows for a typed location ("~/Documents" → "Documents"), or "" when
     // it is not a folder.
@@ -75,10 +71,12 @@ extension AppDelegate {
         let path = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath).standardizedFileURL.path
         return FileManager.default.isDirectory(atPath: path) ? path : nil
     }
-    func addFolder(name text: String, location: String, to controller: FolderListController) {
+    // False when `location` is not a folder (reported), so the sheet can come back.
+    @discardableResult
+    func addFolder(name text: String, location: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let path = folderPath(for: location) else { return }
+        guard !trimmed.isEmpty || !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
+        guard let path = folderPath(for: location) else { return false }
         let index: Int
         if let existing = folders.firstIndex(where: { $0.path == path }) {
             index = existing
@@ -89,7 +87,8 @@ extension AppDelegate {
             saveFolders()
             index = folders.count - 1
         }
-        controller.reveal(entryAt: index)
+        folderList?.reveal(entryAt: index)
+        return true
     }
     // existingFolder(atLocation:), with what is wrong reported when it is nil.
     func folderPath(for location: String) -> String? {
@@ -99,25 +98,19 @@ extension AppDelegate {
                                                      : "“\(trimmed)” is not a folder."))
         return nil
     }
-    // Removes the selected folders and selects the row that took the first one's place.
-    func removeFolders(from controller: FolderListController) {
-        let selection = controller.selectedEntryIndices
-        guard let firstRow = controller.table.selectedRowIndexes.first,
-              ListSelection.remove(selection, from: &folders) else { return }
-        saveFolders()
-        ListSelection.selectAfterRemoval(at: firstRow, in: controller.table)
+    func removeFolders() {
+        removeSelectedEntries(of: folderList, from: \.folders, save: saveFolders)
     }
     // `selection`: indexes into `folders`.
-    func openSelectedFolders(_ selection: IndexSet, in targetTable: NSTableView) {
-        guard targetTable.window?.attachedSheet == nil, !selection.isEmpty else { return }
+    func openSelectedFolders(_ selection: IndexSet) {
+        guard folderList?.table.window?.attachedSheet == nil, !selection.isEmpty else { return }
         report(openFolders(selection.compactMap { folders.indices.contains($0) ? folders[$0] : nil }))
     }
     // Opens the folder a Caps shortcut names, at its saved path.
     func openFolderShortcut(_ folder: FolderEntry) { report(openFolders([folder])) }
     private func openFolders(_ selected: [FolderEntry]) -> FolderBatchOpen.Result {
         FolderBatchOpen.run(selected, isDirectory: FileManager.default.isDirectory(atPath:), open: { folder in
-            self.closePreferencesForAction()
-            return NSWorkspace.shared.open(URL(fileURLWithPath: folder.path, isDirectory: true))
+            NSWorkspace.shared.open(URL(fileURLWithPath: folder.path, isDirectory: true))
         })
     }
     // Every failure of a batch in one alert.
@@ -133,29 +126,35 @@ extension AppDelegate {
     // Name empty (the gray placeholder shows it); clearing the name goes back to the
     // folder's own name. Only what Clutch shows and opens changes; nothing on disk is
     // renamed or moved.
-    func editFolder(at index: Int, in targetTable: NSTableView) {
+    func editFolder(at index: Int) {
         guard folders.indices.contains(index) else { return }
         let folder = folders[index]
-        showFieldSheet(on: targetTable.window, title: "Edit Folder",
-                       button: "Save",
-                       fields: Self.folderFields(name: folder.isRenamed ? folder.name : "",
-                                                 location: (folder.path as NSString).abbreviatingWithTildeInPath)) { [weak self] values in
-            self?.updateFolder(path: folder.path, name: values[0], location: values[1], in: targetTable)
+        showEditFolderSheet(path: folder.path, name: folder.isRenamed ? folder.name : "",
+                            location: (folder.path as NSString).abbreviatingWithTildeInPath)
+    }
+    private func showEditFolderSheet(path: String, name: String, location: String) {
+        showFieldSheet(on: window, title: "Edit Folder",
+                       button: "Save", fields: Self.folderFields(name: name, location: location)) { [weak self] values in
+            guard let self = self, !self.updateFolder(path: path, name: values[0], location: values[1]) else { return }
+            // Not a folder: the sheet comes back with what was typed.
+            DispatchQueue.main.async { self.showEditFolderSheet(path: path, name: values[0], location: values[1]) }
         }
     }
     // Found again by path: the list may have changed while the sheet was open. `location`
     // (nil keeps it) must be an existing folder that no other entry has; "~" is expanded.
     // A folder still showing its own name takes the new folder's name; a renamed one keeps
-    // its name. The shortcut stays.
-    func updateFolder(path: String, name text: String, location: String? = nil, in targetTable: NSTableView? = nil) {
-        guard let index = folders.firstIndex(where: { $0.path == path }) else { return }
+    // its name. The shortcut stays. False when `location` is not a folder (reported), so
+    // the sheet can come back.
+    @discardableResult
+    func updateFolder(path: String, name text: String, location: String? = nil) -> Bool {
+        guard let index = folders.firstIndex(where: { $0.path == path }) else { return true }
         var newPath = path
         if let location = location {
-            guard let standardized = folderPath(for: location) else { return }
+            guard let standardized = folderPath(for: location) else { return false }
             if let other = folders.indices.first(where: { $0 != index && folders[$0].path == standardized }) {
-                if let list = preferencesFolderList, list.table === targetTable { list.reveal(entryAt: other) }
+                folderList?.reveal(entryAt: other)
                 showError(ToolError(message: "\((standardized as NSString).abbreviatingWithTildeInPath) is already in Folders as \(folders[other].name)."))
-                return
+                return true
             }
             newPath = standardized
         }
@@ -168,9 +167,10 @@ extension AppDelegate {
         } else {
             updated.name = trimmed
         }
-        guard updated != folders[index] else { return }
+        guard updated != folders[index] else { return true }
         folders[index] = updated
         saveFolders()
+        return true
     }
     // Selects the folders in a Finder window.
     func revealFolders(_ selection: IndexSet) {

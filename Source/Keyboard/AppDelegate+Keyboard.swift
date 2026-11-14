@@ -159,7 +159,8 @@ extension AppDelegate {
         // What a fresh key-down while Caps is held could mean. The shortcut itself is
         // looked up when Caps is released.
         let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-        let eligible = shortcutsEnabled && type == .keyDown && state.held && key != KeyCode.hyper && key != KeyCode.space && !repeated
+        let eligible = shortcutsEnabled && type == .keyDown && state.held && key != KeyCode.hyper
+            && key != KeyCode.space && key != KeyCode.tab && !repeated
         let windowKey = eligible && windowShortcuts.command(for: key) != nil
         // The app keys so far plus this one (Caps + M, then Caps + M + W, …). A window
         // key takes precedence only as the first key; later it is an ordinary key.
@@ -186,12 +187,15 @@ extension AppDelegate {
         }
         updateLaunchHint(shortcutsEnabled: shortcutsEnabled)
         // While a field records, Caps is input to the field, not a Caps Lock toggle.
-        updateCapsHUD(shortcutsEnabled: shortcutsEnabled, recording: recorder != nil, openingPicker: result.showPicker)
+        updateCapsHUD(shortcutsEnabled: shortcutsEnabled, recording: recorder != nil, openingPicker: result.showPicker || result.showPreferences)
         if routeCapsRecording(type, key: key, to: recorder, capsWasHeld: capsWasHeld, repeated: repeated, flags: event.flags) {
             return nil
         }
         if result.showPicker {
             performOnMainRunLoop { [weak self] in self?.showShelf() }
+        }
+        if result.showPreferences {
+            performOnMainRunLoop { [weak self] in self?.showSettings() }
         }
         if picker != nil, key == KeyCode.hyper, type == .keyDown, !capsWasHeld {
             performOnMainRunLoop { [weak self] in self?.shelfList?.resetJump() }
@@ -259,11 +263,13 @@ extension AppDelegate {
     // saves them. Returns true when the event is consumed.
     func routeCapsRecording(_ type: CGEventType, key: UInt16, to recorder: KeyRecorder?, capsWasHeld: Bool,
                             repeated: Bool, flags: CGEventFlags) -> Bool {
-        guard type == .keyDown || type == .keyUp, let recorder = recorder else {
+        guard let recorder = recorder else {
             // Releases are only owned while recording; later ones pass through.
             recordingCapsKeys.removeAll()
             return false
         }
+        // A modifier changing while a field records keeps the recorded keys' releases owned.
+        guard type == .keyDown || type == .keyUp else { return false }
         if key == KeyCode.hyper {
             if type == .keyDown && !capsWasHeld && !repeated {
                 performOnMainRunLoop { [weak recorder] in recorder?.capsPressed() }

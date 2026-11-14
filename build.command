@@ -6,7 +6,7 @@ cp Clutch-Info.plist Clutch.app/Contents/Info.plist
 export CLANG_MODULE_CACHE_PATH="$PWD/build/module-cache"
 sources=(Source/**/*.swift)
 for arch in arm64 x86_64; do
-  /usr/bin/swiftc -O -target "$arch-apple-macosx12.0" -module-cache-path "$PWD/build/module-cache" "${sources[@]}" -o "build/Clutch-$arch" -framework Cocoa -framework ApplicationServices -framework Carbon -framework IOKit -framework ServiceManagement
+  /usr/bin/swiftc -O -target "$arch-apple-macosx12.0" -module-cache-path "$PWD/build/module-cache" "${sources[@]}" -o "build/Clutch-$arch" -framework Cocoa -framework ApplicationServices -framework IOKit -framework ServiceManagement
 done
 /usr/bin/lipo -create build/Clutch-arm64 build/Clutch-x86_64 -output Clutch.app/Contents/MacOS/Clutch
 # Ad-hoc signatures change on every build, so macOS drops the Accessibility grant.

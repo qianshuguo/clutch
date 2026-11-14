@@ -23,27 +23,21 @@ final class WindowShortcutListController: NSObject, NSTableViewDataSource, NSTab
         InsetListRowView()
     }
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
-        let columnIndex = column.flatMap { tableView.tableColumns.firstIndex(of: $0) } ?? 0
-        let cellWidth = tableView.frameOfCell(atColumn: columnIndex, row: row).width
-        let cell = NSView(frame: NSRect(x: 0, y: 0, width: cellWidth, height: AppDelegate.appRowHeight))
+        let (cell, columnIndex, width) = owner.makeListCell(in: tableView, column: column, row: row)
         let command = commands[row]
         if columnIndex == 0 {
-            let icon = NSImageView(frame: AppDelegate.listIconFrame)
             let symbolImage = NSImage(systemSymbolName: command.symbol, accessibilityDescription: command.title)
                 ?? NSImage(systemSymbolName: command.fallbackSymbol, accessibilityDescription: command.title)
-            icon.image = symbolImage?.withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
+            let icon = owner.makeListIcon(image: symbolImage?.withSymbolConfiguration(.init(pointSize: 15, weight: .regular)))
             icon.imageScaling = .scaleProportionallyDown
             icon.contentTintColor = .secondaryLabelColor
-            cell.addSubview(icon)
-            let name = NSTextField(labelWithString: command.title)
-            owner.configureListName(name, width: cellWidth)
-            cell.addSubview(name)
+            owner.addListName(command.title, icon: icon, to: cell, width: width)
             cell.toolTip = command.detail
-            return cell
+        } else {
+            owner.addShortcutRecorder(to: cell, width: width, for: .window(command),
+                                      keys: owner.windowShortcuts.key(for: command).map { [$0] } ?? [],
+                                      table: tableView, row: row)
         }
-        owner.addShortcutRecorder(to: cell, width: cellWidth, for: .window(command),
-                                  keys: owner.windowShortcuts.key(for: command).map { [$0] } ?? [],
-                                  table: tableView, row: row)
         return cell
     }
 }
@@ -57,7 +51,11 @@ extension AppDelegate {
     func addWindowsPage(to content: NSView) {
         let list = WindowShortcutListController(owner: self)
         windowShortcutList = list
-        addList(list.table, to: content, title: "Action")
+        // Every action fits (the Preferences window is sized for them), so the list stays put:
+        // no scrollbar, no rubber-band bounce.
+        let scroll = addList(list.table, to: content, title: "Action")
+        scroll.hasVerticalScroller = false
+        scroll.verticalScrollElasticity = .none
         let width = content.bounds.width
         addListBottomDivider(to: content, width: width)
         let button = ListActionButton(action: { [weak self] in self?.restoreDefaultWindowShortcuts() })
@@ -66,7 +64,8 @@ extension AppDelegate {
         button.controlSize = .small
         button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         button.sizeToFit()
-        button.frame.origin = NSPoint(x: width - 12 - button.frame.width, y: (32 - button.frame.height) / 2)
+        button.frame.origin = NSPoint(x: width - ListGeometry.trailingInset - button.frame.width,
+                                      y: ListGeometry.bottomBarY(button.frame.height))
         button.autoresizingMask = [.minXMargin]
         content.addSubview(button)
         addListHelp([

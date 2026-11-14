@@ -1,10 +1,11 @@
 import Cocoa
 
 // The Shelf picker (Caps + Space): a search field where the Caps pill sits, the
-// Shelf's files below, newest first, and a line of keys at the bottom. Typing filters;
-// ↑/↓ move, Return opens, ⌘Return reveals in Finder, ⌘⌫ takes the file off the Shelf
-// (the file itself stays). Files are added by pasting files copied in Finder (⌘V) or
-// dropping them on the panel; rows can be dragged out, to attach a file somewhere.
+// Shelf's files below, in the user's order (new files on top), and a line of keys at the
+// bottom. Typing filters; ↑/↓ move, Return opens, ⌘Return reveals in Finder, ⌘⌫ takes
+// the file off the Shelf (the file itself stays). Files are added by pasting files copied
+// in Finder (⌘V) or dropping them on the panel; rows are dragged within the list to
+// reorder them, or out, to attach a file somewhere.
 final class ShelfPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
@@ -15,17 +16,43 @@ final class ShelfPanel: NSPanel {
     var pasteFiles: (() -> Bool)?
 
     override func performClose(_ sender: Any?) {
-        guard attachedSheet == nil else { return }
         close()
         previousFocus?.restore()
     }
-    // Clicking another app (or opening a file) dismisses it.
+    // Clicking another app (or opening a file) dismisses it. A press in another app may
+    // be the start of dragging files here (from Finder, say), so the panel waits for the
+    // button to come up: released over the panel, it stays and takes the keyboard back;
+    // released anywhere else (a plain click, or a drag that went elsewhere), it closes.
+    private var releaseTimer: Timer?
     override func resignKey() {
         super.resignKey()
-        if isVisible, attachedSheet == nil { close() }
+        guard isVisible else { return }
+        if NSEvent.pressedMouseButtons == 0 { close(); return }
+        guard releaseTimer == nil else { return }
+        // Polled: the drag runs in the other app, so its events never reach Clutch.
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            guard let self = self, NSEvent.pressedMouseButtons == 0 else { return }
+            self.stopWaitingForRelease()
+            guard self.isVisible, !self.isKeyWindow else { return }
+            if self.frame.contains(NSEvent.mouseLocation) {
+                self.makeKeyAndOrderFront(nil)
+            } else {
+                self.close()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        releaseTimer = timer
+    }
+    private func stopWaitingForRelease() {
+        releaseTimer?.invalidate()
+        releaseTimer = nil
+    }
+    override func close() {
+        stopWaitingForRelease()
+        super.close()
     }
     override func cancelOperation(_ sender: Any?) {
-        if isKeyWindow, attachedSheet == nil { performClose(sender) }
+        if isKeyWindow { performClose(sender) }
     }
     // Command keys reach the window before the field editor or the Edit menu.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -49,10 +76,7 @@ final class ShelfTableView: NSTableView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         // The search field keeps focus while the menu is open.
-        let row = self.row(at: convert(event.locationInWindow, from: nil))
-        guard row >= 0 else { return nil }
-        if !selectedRowIndexes.contains(row) { selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
-        displayIfNeeded()
+        guard ListSelection.selectForMenu(event, in: self, focus: false) != nil else { return nil }
         let menu = NSMenu()
         for (title, action) in [("Open", #selector(openSelected)), ("Reveal in Finder", #selector(revealSelected))] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
@@ -78,9 +102,10 @@ final class ShelfTableView: NSTableView {
 
 // The rows are the Shelf files matching the search, best match first (in Shelf order
 // without a search). `entryIndex(forRow:)` maps a row back to `owner.shelf`.
-final class ShelfListController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+final class ShelfListController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, FilteredList {
     unowned let owner: AppDelegate
     let table = ShelfTableView()
+    var listTable: NSTableView { table }
     weak var searchField: NSSearchField?
     weak var emptyLabel: NSTextField?
     private(set) var filter = ""
@@ -112,10 +137,11 @@ final class ShelfListController: NSObject, NSTableViewDataSource, NSTableViewDel
         }
         table.removeSelection = { [weak self] in
             guard let self = self else { return }
-            self.owner.removeShelfFiles(self.selectedEntryIndices, in: self.table)
+            self.owner.removeShelfFiles(self.selectedEntryIndices)
         }
         table.registerForDraggedTypes([.fileURL])
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
+        table.setDraggingSourceOperationMask(.move, forLocal: true)
         table.draggingDestinationFeedbackStyle = .regular
         // An input method's text still being composed (Pinyin before a character is
         // chosen) is not reported as a text change; the field editor's storage holds
@@ -134,14 +160,6 @@ final class ShelfListController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     // MARK: Rows
 
-    func entryIndex(forRow row: Int) -> Int? {
-        let visible = visibleIndices
-        return visible.indices.contains(row) ? visible[row] : nil
-    }
-    var selectedEntryIndices: IndexSet {
-        let visible = visibleIndices
-        return IndexSet(table.selectedRowIndexes.filter { visible.indices.contains($0) }.map { visible[$0] })
-    }
     func reload() {
         visibleIndices = Shelf.ordered(owner.shelf.map { $0.name }, query: filter)
         table.reloadData()
@@ -230,7 +248,7 @@ final class ShelfListController: NSObject, NSTableViewDataSource, NSTableViewDel
     // Caps + letters jump among the rows shown without changing the search; keys
     // pressed close together refine the match.
     func jump(key: UInt16, time: TimeInterval) {
-        guard let text = keys.first(where: { $0.1 == key })?.0 else { return }
+        guard let text = keyName(key) else { return }
         let names = visibleIndices.map { owner.shelf[$0].name }
         let query = time - jumpTime < 0.8 ? jumpQuery + text : text
         let match = Shelf.ordered(names, query: query).first
@@ -253,15 +271,16 @@ final class ShelfListController: NSObject, NSTableViewDataSource, NSTableViewDel
         let entry = owner.shelf[index]
         let width = tableColumn?.width ?? tableView.bounds.width
         let cell = NSView(frame: NSRect(x: 0, y: 0, width: width, height: AppDelegate.appRowHeight))
-        cell.addSubview(owner.makeListIcon(path: entry.path))
         let hintWidth: CGFloat = row < 9 ? 28 : 0
-        let name = NSTextField(labelWithString: entry.name)
-        owner.configureListName(name, width: width - hintWidth - ListGeometry.trailingInset)
-        cell.addSubview(name)
+        // The column already stops short of the scrollbar lane, so the hint sits close to
+        // the column's edge rather than a full list inset in.
+        let hintTrailing: CGFloat = 4
+        owner.addListName(entry.name, icon: owner.makeListIcon(path: entry.path), to: cell,
+                          width: width - hintWidth - hintTrailing)
         if row < 9 {
             let hint = NSTextField(labelWithString: "⇪\(row + 1)")
             hint.font = .systemFont(ofSize: 12)
-            hint.frame = NSRect(x: width - ListGeometry.trailingInset - hintWidth, y: AppDelegate.listNameFrame.minY,
+            hint.frame = NSRect(x: width - hintTrailing - hintWidth, y: AppDelegate.listNameFrame.minY,
                                 width: hintWidth, height: AppDelegate.listNameFrame.height)
             hint.autoresizingMask = [.minXMargin]
             hint.alignment = .right
@@ -275,11 +294,17 @@ final class ShelfListController: NSObject, NSTableViewDataSource, NSTableViewDel
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
         entryIndex(forRow: row).map { NSURL(fileURLWithPath: owner.shelf[$0].path) }
     }
-    // Files dropped from elsewhere go on the Shelf.
+    // Rows dragged within the list reorder it; files dropped from elsewhere go on the Shelf.
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
-        guard info.draggingSource as? NSTableView !== tableView,
-              !Self.fileURLs(on: info.draggingPasteboard).isEmpty else { return [] }
+        let urls = Self.fileURLs(on: info.draggingPasteboard)
+        guard !urls.isEmpty else { return [] }
+        if info.draggingSource as? NSTableView === tableView {
+            // Drop rows are positions in the whole list, so reordering waits for an empty search.
+            guard filter.isEmpty, (0...owner.shelf.count).contains(row) else { return [] }
+            tableView.setDropRow(row, dropOperation: .above)
+            return .move
+        }
         // The whole list highlights: new files always go on top.
         tableView.setDropRow(-1, dropOperation: .on)
         return .copy
@@ -288,6 +313,14 @@ final class ShelfListController: NSObject, NSTableViewDataSource, NSTableViewDel
                    dropOperation: NSTableView.DropOperation) -> Bool {
         let urls = Self.fileURLs(on: info.draggingPasteboard)
         guard !urls.isEmpty else { return false }
+        if info.draggingSource as? NSTableView === tableView {
+            let paths = urls.map { $0.standardizedFileURL.path }
+            guard filter.isEmpty, let moved = ListOrder.move(&owner.shelf, paths: paths, to: row) else { return false }
+            owner.saveShelf()
+            tableView.selectRowIndexes(moved, byExtendingSelection: false)
+            if let first = moved.first { tableView.scrollRowToVisible(first) }
+            return true
+        }
         owner.addShelfFiles(urls)
         return true
     }

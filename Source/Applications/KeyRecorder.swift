@@ -16,7 +16,30 @@ final class KeyRecorder: NSButton {
     private static let clearGlyph = "\u{2715}"   // ✕
     private static let escapeGlyph = "\u{238B}"  // ⎋
 
-    var savedTitle = KeyRecorder.emptyTitle
+    // What the field shows: a line of text (the empty field, a prompt), or ⇪ and keys,
+    // with "…" while more keys may follow. `title` always says the same, for
+    // accessibility: "Record Shortcut", "⇪M W", "⇪M…".
+    private enum Content {
+        case text(String)
+        case keys([UInt16], more: Bool)
+
+        // A saved shortcut, or the empty field.
+        static func saved(_ keys: [UInt16]) -> Content {
+            shortcutName(keys) == nil ? .text(KeyRecorder.emptyTitle) : .keys(keys, more: false)
+        }
+        var title: String {
+            switch self {
+            case .text(let text): return text
+            case .keys(let keys, let more): return capsSymbol + (shortcutName(keys) ?? "") + (more ? "…" : "")
+            }
+        }
+    }
+    private var content = Content.text(KeyRecorder.emptyTitle) {
+        didSet {
+            title = content.title
+            needsDisplay = true
+        }
+    }
     var recording = false { didSet { if recording != oldValue { needsDisplay = true } } }
     weak var selectionTable: NSTableView?
     var onStart: (() -> Void)?
@@ -30,10 +53,7 @@ final class KeyRecorder: NSButton {
     var capsAvailable: (() -> Bool)?
     // The saved shortcut, shown while not recording.
     var shortcutKeys: [UInt16] = [] {
-        didSet {
-            title = shortcutTitle(shortcutKeys)
-            needsDisplay = true
-        }
+        didSet { content = .saved(shortcutKeys) }
     }
     var hasShortcut: Bool { shortcutName(shortcutKeys) != nil }
     private var recordedKeys: [UInt16] = []
@@ -76,11 +96,6 @@ final class KeyRecorder: NSButton {
     }
     private var showsClear: Bool { !recording && hasShortcut && onClear != nil }
     private var hintGlyph: String? { recording ? Self.escapeGlyph : (showsClear ? Self.clearGlyph : nil) }
-    // While recording, pointing at ⎋ says what clicking it does.
-    private var displayedTitle: String {
-        guard recording, hintHovered else { return title }
-        return hasShortcut ? "Use Old Shortcut" : "Cancel"
-    }
     private func roundedPath(_ rect: NSRect) -> NSBezierPath {
         NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: Self.cornerRadius, yRadius: Self.cornerRadius)
     }
@@ -102,25 +117,25 @@ final class KeyRecorder: NSButton {
             drawText(glyph, in: hintRect, color: hintHovered ? .labelColor : .secondaryLabelColor)
         }
         outer.stroke()
-        let text = displayedTitle
-        if text.hasPrefix(capsSymbol) {
-            drawKeys(Self.keyTokens(text), in: textArea, color: .labelColor)
-        } else {
+        if recording, hintHovered {
+            // While recording, pointing at ⎋ says what clicking it does.
+            drawText(hasShortcut ? "Use Old Shortcut" : "Cancel", in: textArea, color: .secondaryLabelColor)
+            return
+        }
+        switch content {
+        case .text(let text):
             drawText(text, in: textArea, color: .secondaryLabelColor)
+        case .keys(let keys, let more):
+            // ["⇪", "M", "W", "…"]
+            var tokens: [String] = [capsSymbol]
+            tokens += keys.map { keyName($0) ?? "?" }
+            if more { tokens.append("…") }
+            drawKeys(tokens, in: textArea, color: .labelColor)
         }
     }
     override var focusRingMaskBounds: NSRect { bounds }
     override func drawFocusRingMask() { roundedPath(bounds).fill() }
 
-    // "⇪M W…" → ["⇪", "M", "W", "…"].
-    static func keyTokens(_ text: String) -> [String] {
-        var parts = String(text.dropFirst(capsSymbol.count)).split(separator: " ").map(String.init)
-        if let last = parts.last, last.count > 1, last.hasSuffix("…") {
-            parts[parts.count - 1] = String(last.dropLast())
-            parts.append("…")
-        }
-        return [capsSymbol] + parts
-    }
     // One line of text, vertically centered in `rect`, then raised by `textRaise`.
     private static let lineHeight = ceil(NSLayoutManager().defaultLineHeight(for: textFont))
     private static let textRaise: CGFloat = 1
@@ -190,9 +205,9 @@ final class KeyRecorder: NSButton {
             return
         }
         guard window?.makeFirstResponder(self) == true else { return }
-        if !recording { savedTitle = title; recording = true; onStart?() }
+        if !recording { recording = true; onStart?() }
         recordedKeys = []
-        title = prompt
+        content = .text(prompt)
     }
     var prompt: String {
         if capsAvailable?() == false { return "Turn on Clutch" }
@@ -208,7 +223,7 @@ final class KeyRecorder: NSButton {
     func capsPressed() {
         guard recording, capsAvailable?() != false else { return }
         recordedKeys = []
-        title = capsSymbol + "…"
+        showRecordedKeys()
     }
     // A key pressed while Caps is held, in press order.
     func capsKeyPressed(_ code: UInt16) {
@@ -229,21 +244,20 @@ final class KeyRecorder: NSButton {
             showRecordedKeys()
             return
         }
-        // Space is reserved, like Return (and Delete above): it never shows up in the field.
-        guard code != KeyCode.space, keyName(code) != nil else { NSSound.beep(); return }
+        // Space and Tab are reserved, like Return (and Delete above): they never show up in the field.
+        guard code != KeyCode.space, code != KeyCode.tab, keyName(code) != nil else { NSSound.beep(); return }
         guard recordedKeys.count < maxKeys else { NSSound.beep(); return }
         recordedKeys.append(code)
         showRecordedKeys()
     }
     // "⇪…" before any key, "⇪T…" while another key may follow, "⇪T H E" once no more can.
     private func showRecordedKeys() {
-        guard let name = shortcutName(recordedKeys) else { title = capsSymbol + "…"; return }
-        title = capsSymbol + name + (recordedKeys.count < maxKeys ? "…" : "")
+        content = .keys(recordedKeys, more: recordedKeys.count < maxKeys)
     }
     // Releasing Caps saves what was pressed; Caps alone records nothing.
     func capsReleased() {
         guard recording, onKeys != nil else { return }
-        guard !recordedKeys.isEmpty else { title = prompt; return }
+        guard !recordedKeys.isEmpty else { content = .text(prompt); return }
         saveRecordedKeys()
     }
     private func saveRecordedKeys() {
@@ -253,7 +267,7 @@ final class KeyRecorder: NSButton {
         if onKeys(keys) {
             finishRecording()
         } else if recording {
-            title = prompt
+            content = .text(prompt)
         }
     }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -270,7 +284,7 @@ final class KeyRecorder: NSButton {
     }
     func cancelRecording() {
         recordedKeys = []
-        if recording { title = savedTitle; recording = false }
+        if recording { content = .saved(shortcutKeys); recording = false }
     }
     override func resignFirstResponder() -> Bool {
         cancelRecording()

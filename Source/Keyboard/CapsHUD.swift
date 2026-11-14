@@ -441,12 +441,10 @@ final class CapsOverlay {
                 panel.orderFrontRegardless()
                 redrawBackdrop()
             }
-        } else if mode != stage {
-            // Keys ⇄ app card: the same window grows or shrinks.
-            content.setStage(stage, animated: true)
-            setFrame(frame, animated: true)
         } else {
             content.setStage(stage, animated: true)
+            // Keys ⇄ app card: the same window grows or shrinks.
+            if mode != stage { setFrame(frame, animated: true) }
         }
         mode = stage
     }

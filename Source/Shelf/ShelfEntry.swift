@@ -4,17 +4,10 @@ import Foundation
 // download to read), opened from Caps + Space without a shortcut of their own. Files
 // stay until they are removed, or until they are moved or deleted.
 // Foundation-only, so the pure tests can compile it.
-struct ShelfEntry: Codable, Equatable {
+struct ShelfEntry: Codable, Equatable, PathEntry {
+    // The list order is the user's: new files go on top, and rows are dragged to reorder them.
     var path: String
-    var added: Date
-    // When it was added or last opened from the Shelf; the list is newest first.
-    var used: Date
 
-    init(path: String, at date: Date) {
-        self.path = path
-        added = date
-        used = date
-    }
     var name: String { FileManager.default.displayName(atPath: path) }
 }
 
@@ -22,24 +15,13 @@ enum Shelf {
     // Adds `paths` at the top in the given order; a file already on the Shelf moves up.
     // Returns the paths in the order they now head the list.
     @discardableResult
-    static func add(_ paths: [String], to entries: inout [ShelfEntry], at date: Date) -> [String] {
+    static func add(_ paths: [String], to entries: inout [ShelfEntry]) -> [String] {
         var seen = Set<String>()
         let unique = paths.map { ($0 as NSString).standardizingPath }.filter { seen.insert($0).inserted }
         guard !unique.isEmpty else { return [] }
-        let kept = Dictionary(entries.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         entries.removeAll { seen.contains($0.path) }
-        let added = unique.map { path -> ShelfEntry in
-            var entry = kept[path] ?? ShelfEntry(path: path, at: date)
-            entry.used = date
-            return entry
-        }
-        entries.insert(contentsOf: added, at: 0)
+        entries.insert(contentsOf: unique.map { ShelfEntry(path: $0) }, at: 0)
         return unique
-    }
-    // Opening a file moves it to the top.
-    static func markUsed(_ paths: [String], in entries: inout [ShelfEntry], at date: Date) {
-        let opened = paths.filter { path in entries.contains { $0.path == path } }
-        add(opened, to: &entries, at: date)
     }
     // Drops files that were moved or deleted; nothing leaves for its age.
     // Returns whether anything was dropped.

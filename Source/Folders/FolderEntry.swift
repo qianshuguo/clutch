@@ -1,6 +1,6 @@
 import Foundation
 
-struct FolderEntry: Codable, Equatable, KeyShortcut {
+struct FolderEntry: Codable, Equatable, KeyShortcut, PathEntry {
     var name: String
     var path: String
     // Caps + these keys, in order, opens the folder from any app (⇪D, ⇪D W, ⇪D W E).
@@ -36,21 +36,6 @@ extension FileManager {
     func isDirectory(atPath path: String) -> Bool {
         var directory: ObjCBool = false
         return fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
-    }
-}
-
-// Drop positions are insertion boundaries in the original list.
-enum FolderOrder {
-    static func move(_ folders: inout [FolderEntry], paths: [String], to boundary: Int) -> IndexSet? {
-        let requested = Set(paths)
-        let sources = folders.indices.filter { requested.contains(folders[$0].path) }
-        guard (0...folders.count).contains(boundary), !sources.isEmpty,
-              sources.count == requested.count else { return nil }
-        let moving = sources.map { folders[$0] }
-        let destination = boundary - sources.filter { $0 < boundary }.count
-        for index in sources.reversed() { folders.remove(at: index) }
-        folders.insert(contentsOf: moving, at: destination)
-        return IndexSet(integersIn: destination..<(destination + moving.count))
     }
 }
 

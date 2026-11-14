@@ -33,3 +33,26 @@ enum StoredList {
         if let data = try? JSONEncoder().encode(list) { defaults.set(data, forKey: key) }
     }
 }
+
+// An entry its list finds by path (Folders, the Shelf).
+protocol PathEntry {
+    var path: String { get }
+}
+
+// Reordering by dragging rows.
+enum ListOrder {
+    // Moves the entries with these paths, in their list order, to `boundary`, an
+    // insertion position in the list before the move (a dragged row's drop position).
+    // Returns the rows they now take, or nil when a path is not in the list.
+    static func move<Entry: PathEntry>(_ entries: inout [Entry], paths: [String], to boundary: Int) -> IndexSet? {
+        let requested = Set(paths)
+        let sources = entries.indices.filter { requested.contains(entries[$0].path) }
+        guard (0...entries.count).contains(boundary), !sources.isEmpty,
+              sources.count == requested.count else { return nil }
+        let moving = sources.map { entries[$0] }
+        let destination = boundary - sources.filter { $0 < boundary }.count
+        for index in sources.reversed() { entries.remove(at: index) }
+        entries.insert(contentsOf: moving, at: destination)
+        return IndexSet(integersIn: destination..<(destination + moving.count))
+    }
+}

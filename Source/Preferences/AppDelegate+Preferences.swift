@@ -97,7 +97,22 @@ extension AppDelegate: NSToolbarDelegate {
         let otherOptions = group([loginCheckbox!, visibility], spacing: 18)
         let divider = NSBox()
         divider.boxType = .separator
-        let column = group([activation, divider, otherOptions], spacing: 22)
+        // The Shelf has no settings and no page: this line says where it is and opens it.
+        let shelfLabel = NSTextField(labelWithString: "Caps + Space opens the Shelf")
+        shelfLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let shelfButton = NSButton(title: "Open Shelf", target: self, action: #selector(showShelf))
+        shelfButton.controlSize = .small
+        shelfButton.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        shelfButton.setContentHuggingPriority(.required, for: .horizontal)
+        let shelfRow = NSStackView(views: [shelfLabel, shelfButton])
+        shelfRow.alignment = .firstBaseline
+        let shelfDivider = NSBox()
+        shelfDivider.boxType = .separator
+        // The menu cannot show ⇪ shortcuts, so both global ones are named here.
+        let preferencesLabel = NSTextField(labelWithString: "Caps + Tab opens Preferences")
+        let globalShortcuts = group([shelfRow, preferencesLabel], spacing: 6)
+        // 18 between the groups keeps all three inside the fixed window height.
+        let column = group([activation, divider, otherOptions, shelfDivider, globalShortcuts], spacing: 18)
         column.translatesAutoresizingMaskIntoConstraints = false
         general.addSubview(column)
         NSLayoutConstraint.activate([
@@ -105,14 +120,16 @@ extension AppDelegate: NSToolbarDelegate {
             column.centerXAnchor.constraint(equalTo: general.centerXAnchor),
             column.centerYAnchor.constraint(equalTo: general.centerYAnchor),
             activation.widthAnchor.constraint(equalTo: column.widthAnchor),
-            divider.widthAnchor.constraint(equalTo: column.widthAnchor)
+            divider.widthAnchor.constraint(equalTo: column.widthAnchor),
+            shelfDivider.widthAnchor.constraint(equalTo: column.widthAnchor),
+            globalShortcuts.widthAnchor.constraint(equalTo: column.widthAnchor),
+            shelfRow.widthAnchor.constraint(equalTo: globalShortcuts.widthAnchor)
         ])
 
         addApplicationsPage(to: pages[1])
         addFoldersPage(to: pages[2])
         addWebsitesPage(to: pages[3])
         addWindowsPage(to: pages[4])
-        addShelfPage(to: pages[5])
         syncPreferences()
         selectPage(selectedPage)
         return content

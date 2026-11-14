@@ -5,37 +5,33 @@ extension AppDelegate {
     static var listScrollbarWidth: CGFloat { NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) }
     // Two fixed columns: `title` (Application, Name, Action) and Shortcut. The shortcut
     // field is right-aligned in its column, so a wider first column (`nameWidth`) gives
-    // names more room without moving the field or the Shortcut header. Without
-    // `shortcuts` (the Shelf) the first column is the only one and fills the list.
-    func configureList(_ list: NSTableView, width: CGFloat, title: String, nameWidth: CGFloat = 244,
-                       shortcuts: Bool = true) {
-        // Plain rows keep the same margins when AppKit switches scroller styles.
-        list.style = .plain
+    // names more room without moving the field or the Shortcut header.
+    func configureList(_ list: NSTableView, width: CGFloat, title: String, nameWidth: CGFloat = 244) {
+        styleList(list)
         let scrollbarWidth = Self.listScrollbarWidth
         let first = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         first.title = title
         first.resizingMask = []
-        if shortcuts {
-            first.minWidth = 110
-            first.maxWidth = max(width - 190, nameWidth)
-            first.width = nameWidth
-            let second = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("shortcut"))
-            second.title = "Shortcut"
-            second.minWidth = min(190, width - nameWidth - scrollbarWidth)
-            second.width = width - first.width - scrollbarWidth
-            second.resizingMask = []
-            for column in [first, second] { list.addTableColumn(column) }
-        } else {
-            first.minWidth = width - scrollbarWidth
-            first.maxWidth = width - scrollbarWidth
-            first.width = width - scrollbarWidth
-            list.addTableColumn(first)
-        }
-        list.headerView = nil
+        first.minWidth = 110
+        first.maxWidth = max(width - 190, nameWidth)
+        first.width = nameWidth
+        let second = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("shortcut"))
+        second.title = "Shortcut"
+        second.minWidth = min(190, width - nameWidth - scrollbarWidth)
+        second.width = width - first.width - scrollbarWidth
+        second.resizingMask = []
+        for column in [first, second] { list.addTableColumn(column) }
         // Leave the trailing header lane unadorned.
         list.cornerView = nil
         list.allowsColumnReordering = false
         list.allowsColumnResizing = false
+    }
+    // What every list shares, the Shelf picker's included: plain rows of one height on
+    // the list surface, and no native header.
+    func styleList(_ list: NSTableView) {
+        // Plain rows keep the same margins when AppKit switches scroller styles.
+        list.style = .plain
+        list.headerView = nil
         list.rowHeight = Self.appRowHeight
         list.intercellSpacing = .zero
         list.backgroundColor = .clear
@@ -43,8 +39,8 @@ extension AppDelegate {
         list.columnAutoresizingStyle = .noColumnAutoresizing
     }
     func addListHeader(to content: NSView, table: NSTableView, size: NSSize) {
-        let header = PlainListHeaderView(frame: NSRect(x: 0, y: size.height - 28,
-                                                       width: size.width, height: 28))
+        let header = PlainListHeaderView(frame: NSRect(x: 0, y: size.height - ListGeometry.headerHeight,
+                                                       width: size.width, height: ListGeometry.headerHeight))
         header.tableView = table
         header.autoresizingMask = [.width, .minYMargin]
         content.addSubview(header)
@@ -53,23 +49,39 @@ extension AppDelegate {
     // Rows are rebuilt on every reload; icon lookups hit Launch Services and the disk.
     private static let listIcons = NSCache<NSString, NSImage>()
     func makeListIcon(path: String) -> NSImageView {
+        if let cached = Self.listIcons.object(forKey: path as NSString) { return makeListIcon(image: cached) }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        Self.listIcons.setObject(image, forKey: path as NSString)
+        return makeListIcon(image: image)
+    }
+    func makeListIcon(image: NSImage?) -> NSImageView {
         let icon = NSImageView(frame: Self.listIconFrame)
         icon.imageScaling = .scaleProportionallyUpOrDown
-        if let cached = Self.listIcons.object(forKey: path as NSString) {
-            icon.image = cached
-        } else {
-            let image = NSWorkspace.shared.icon(forFile: path)
-            Self.listIcons.setObject(image, forKey: path as NSString)
-            icon.image = image
-        }
+        icon.image = image
         return icon
     }
-    func configureListName(_ name: NSTextField, width: CGFloat) {
+    // An empty cell for `row` in `column`, with the column's index (0 is the name, 1 the
+    // shortcut) and the cell's width.
+    func makeListCell(in tableView: NSTableView, column: NSTableColumn?,
+                      row: Int) -> (cell: NSView, columnIndex: Int, width: CGFloat) {
+        let columnIndex = column.flatMap { tableView.tableColumns.firstIndex(of: $0) } ?? 0
+        let width = tableView.frameOfCell(atColumn: columnIndex, row: row).width
+        let cell = NSView(frame: NSRect(x: 0, y: 0, width: width, height: Self.appRowHeight))
+        return (cell, columnIndex, width)
+    }
+    // A name cell's contents: the icon, then the name in the `width` left of anything
+    // else in the cell. Returns the name's label.
+    @discardableResult
+    func addListName(_ text: String, icon: NSImageView, to cell: NSView, width: CGFloat) -> NSTextField {
+        cell.addSubview(icon)
+        let name = NSTextField(labelWithString: text)
         name.frame = Self.listNameFrame
         name.frame.size.width = max(0, width - name.frame.minX - 6)
         name.autoresizingMask = [.width]
         name.font = .systemFont(ofSize: 13)
         name.lineBreakMode = .byTruncatingTail
+        cell.addSubview(name)
+        return name
     }
     // One clickable field showing the whole shortcut (“⇪M W”), right-aligned and
     // vertically centered in a list's shortcut column, that records and clears
@@ -99,11 +111,11 @@ extension AppDelegate {
         return recorder
     }
     func makeListScroll(size: NSSize, headerHeight: CGFloat = 0) -> NSScrollView {
-        let headerSpacing: CGFloat = headerHeight > 0 ? 6 : 0
-        let footerSpacing: CGFloat = 6
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 33 + footerSpacing,
+        let headerSpacing: CGFloat = headerHeight > 0 ? ListGeometry.spacing : 0
+        let footer = ListGeometry.bottomBarHeight + ListGeometry.bottomRuleHeight + ListGeometry.spacing
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: footer,
                                                 width: size.width,
-                                                height: size.height - 33 - headerHeight - headerSpacing - footerSpacing))
+                                                height: size.height - footer - headerHeight - headerSpacing))
         scroll.autoresizingMask = [.width, .height]
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -118,11 +130,10 @@ extension AppDelegate {
     // A Preferences list page's table, configured by configureList, in a scroll view
     // between the column header and the bottom bar. Returns the scroll view.
     @discardableResult
-    func addList(_ table: NSTableView, to page: NSView, title: String, nameWidth: CGFloat = 244,
-                 shortcuts: Bool = true) -> NSScrollView {
+    func addList(_ table: NSTableView, to page: NSView, title: String, nameWidth: CGFloat = 244) -> NSScrollView {
         let size = page.bounds.size
-        let scroll = makeListScroll(size: size, headerHeight: 28)
-        configureList(table, width: size.width, title: title, nameWidth: nameWidth, shortcuts: shortcuts)
+        let scroll = makeListScroll(size: size, headerHeight: ListGeometry.headerHeight)
+        configureList(table, width: size.width, title: title, nameWidth: nameWidth)
         scroll.documentView = table
         scroll.tile()
         page.addSubview(scroll)
@@ -147,7 +158,7 @@ extension AppDelegate {
             .withSymbolConfiguration(.init(pointSize: 14, weight: .light))
         button.imagePosition = .imageOnly
         button.contentTintColor = .secondaryLabelColor
-        button.frame = NSRect(x: x, y: 2, width: 28, height: 28)
+        button.frame = NSRect(x: x, y: ListGeometry.bottomBarY(28), width: 28, height: 28)
         button.setAccessibilityLabel(tip)
         return button
     }
@@ -157,9 +168,10 @@ extension AppDelegate {
         content.addSubview(makeListButton(symbol: "plus", x: 8, action: add, tip: "Add \(itemName)"))
         content.addSubview(makeListButton(symbol: "minus", x: 38, action: remove, tip: "Remove \(itemName)"))
     }
-    // The rule above a list's 32 pt bottom bar.
+    // The rule above a list's bottom bar.
     func addListBottomDivider(to content: NSView, width: CGFloat) {
-        let divider = NSBox(frame: NSRect(x: 0, y: 32, width: width, height: 1))
+        let divider = NSBox(frame: NSRect(x: 0, y: ListGeometry.bottomBarHeight, width: width,
+                                          height: ListGeometry.bottomRuleHeight))
         divider.boxType = .separator
         divider.autoresizingMask = [.width]
         content.addSubview(divider)
@@ -168,29 +180,27 @@ extension AppDelegate {
     @discardableResult
     func addListHelp(_ items: [HelpButton.Item], to content: NSView, trailing: CGFloat) -> HelpButton {
         let help = HelpButton(items)
-        help.frame.origin = NSPoint(x: trailing - help.frame.width, y: (32 - help.frame.height) / 2)
+        help.frame.origin = NSPoint(x: trailing - help.frame.width, y: ListGeometry.bottomBarY(help.frame.height))
         help.autoresizingMask = [.minXMargin]
         content.addSubview(help)
         return help
     }
 
-    // App List, Folders, Websites and Shelf: the list between its column header and a
+    // App List, Folders and Websites: the list between its column header and a
     // bottom bar with + / −, a search field and ?, and a gray label over the list when it
     // has no entries or the search matches none. Everything these pages share is built
     // here; the spec holds only what differs. Windows has fixed actions and builds its own page.
     func addEntryListPage(_ spec: ListPageSpec, list: SearchableList, to page: NSView) {
         let width = page.bounds.width
-        let scroll = addList(list.listTable, to: page, title: spec.entryName, nameWidth: spec.nameWidth,
-                             shortcuts: spec.shortcutAction != nil)
+        let scroll = addList(list.listTable, to: page, title: spec.entryName, nameWidth: spec.nameWidth)
         addListControls(to: page, width: width, add: spec.add, remove: spec.remove, itemName: spec.entryName)
-        let shortcutHelp: [HelpButton.Item] = spec.shortcutAction.map {
-            [("Caps + key, release Caps", $0), ("Set a shortcut", "Hold ⇪ + up to 3 keys")]
-        } ?? []
+        let shortcutHelp: [HelpButton.Item] = [("Caps + key, release Caps", spec.shortcutAction),
+                                               ("Set a shortcut", "Hold ⇪ + up to 3 keys")]
         let help = addListHelp(shortcutHelp
                                + spec.help
                                + [("⌘F", "Search by name"),
                                   ("Type in the list", "Jump to one by name")],
-                               to: page, trailing: width - 12)
+                               to: page, trailing: width - ListGeometry.trailingInset)
         let search = list.search
         let field = NSSearchField()
         field.controlSize = .small
@@ -204,7 +214,7 @@ extension AppDelegate {
         field.sizeToFit()
         let fieldWidth: CGFloat = 160
         let fieldHeight = field.frame.height
-        field.frame = NSRect(x: help.frame.minX - 8 - fieldWidth, y: ((32 - fieldHeight) / 2).rounded(),
+        field.frame = NSRect(x: help.frame.minX - 8 - fieldWidth, y: ListGeometry.bottomBarY(fieldHeight).rounded(),
                              width: fieldWidth, height: fieldHeight)
         field.autoresizingMask = [.minXMargin]
         page.addSubview(field)
@@ -214,13 +224,24 @@ extension AppDelegate {
         search.emptyLabel = addEmptyListLabel("", over: scroll, to: page)
         list.reload()
     }
+    // − on a list page: removes the list's selected entries from the entries at
+    // `entries`, saves, and selects the row that took the first one's place. Rows may be
+    // filtered by the search, so selected rows are mapped back to their entries first.
+    func removeSelectedEntries<Entry>(of list: SearchableList?,
+                                      from entries: ReferenceWritableKeyPath<AppDelegate, [Entry]>,
+                                      save: () -> Void) {
+        guard let list = list, let firstRow = list.listTable.selectedRowIndexes.first else { return }
+        let selection = list.selectedEntryIndices
+        guard ListSelection.remove(selection, from: &self[keyPath: entries]) else { return }
+        save()
+        ListSelection.selectAfterRemoval(at: firstRow, in: list.listTable)
+    }
     // The list on Preferences tab `index`, if that tab is a list page.
     func entryList(onPage index: Int) -> SearchableList? {
         switch Self.preferenceTabs[index].id {
         case "apps": return applicationList
-        case "folders": return preferencesFolderList
+        case "folders": return folderList
         case "websites": return websiteList
-        case "shelf": return preferencesShelfList
         default: return nil
         }
     }
@@ -238,8 +259,8 @@ extension AppDelegate {
     // labeled text field per row, and `button` with Cancel. A field that `choosesFolder`
     // has a Choose… button that fills it from a folder picker. A field with a
     // `placeholder` shows it in gray, worked out again from every field's text as the
-    // person types or chooses. The first field has focus and Tab cycles through them.
-    // `completion` gets the fields' text, in order, when the person clicks `button`.
+    // person types or chooses. `button` is disabled while a `required` field is empty.
+    // The first field has focus and Tab cycles through them. `completion` gets the fields' text, in order, when the person clicks `button`.
     func showFieldSheet(on owner: NSWindow?, title: String, message: String = "", button: String,
                         fields: [SheetField], completion: @escaping ([String]) -> Void) {
         showFieldSheet(on: owner, title: title, message: message, button: button, fields: fields,
@@ -252,6 +273,8 @@ extension AppDelegate {
                         completion: @escaping ([String], Bool) -> Void) {
         guard let owner = owner, owner.attachedSheet == nil, !fields.isEmpty else { return }
         let alert = NSAlert()
+        let confirm = alert.addButton(withTitle: button)
+        alert.addButton(withTitle: "Cancel")
         let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         let labelWidth = ceil(fields.map { ($0.label as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0) + 2
         let fieldWidth: CGFloat = 280, rowHeight: CGFloat = 22, spacing: CGFloat = 8
@@ -260,11 +283,14 @@ extension AppDelegate {
         let height = fieldsHeight + (checkbox == nil ? 0 : spacing + checkboxHeight)
         let form = NSView(frame: NSRect(x: 0, y: 0, width: labelWidth + 8 + fieldWidth, height: height))
         var textFields: [NSTextField] = []
-        // Placeholders follow the text in every field.
-        let refreshPlaceholders: () -> Void = {
+        // Placeholders follow the text in every field, and `button` waits for the required ones.
+        let refreshFields: () -> Void = {
             let values = textFields.map { $0.stringValue }
             for (field, item) in zip(textFields, fields) {
                 if let placeholder = item.placeholder { field.placeholderString = placeholder(values) }
+            }
+            confirm.isEnabled = !zip(values, fields).contains { value, item in
+                item.required && value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
         }
         textFields = fields.enumerated().map { index, item in
@@ -283,7 +309,7 @@ extension AppDelegate {
             if item.choosesFolder {
                 let choose = ListActionButton { [weak alert, weak field] in
                     guard let alert = alert, let field = field else { return }
-                    Self.chooseFolder(for: field, on: alert.window, chosen: refreshPlaceholders)
+                    Self.chooseFolder(for: field, on: alert.window, chosen: refreshFields)
                 }
                 choose.title = "Choose…"
                 choose.bezelStyle = .rounded
@@ -303,17 +329,15 @@ extension AppDelegate {
         for (index, view) in keyViews.enumerated() {
             view.nextKeyView = keyViews[(index + 1) % keyViews.count]
         }
-        refreshPlaceholders()
-        let observers: [NSObjectProtocol] = fields.contains(where: { $0.placeholder != nil })
+        refreshFields()
+        let observers: [NSObjectProtocol] = fields.contains(where: { $0.placeholder != nil || $0.required })
             ? textFields.map { field in
                 NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification,
-                                                       object: field, queue: .main) { _ in refreshPlaceholders() }
+                                                       object: field, queue: .main) { _ in refreshFields() }
             } : []
         alert.messageText = title
         alert.informativeText = message
         alert.accessoryView = form
-        alert.addButton(withTitle: button)
-        alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = textFields[0]
         alert.beginSheetModal(for: owner) { response in
             for observer in observers { NotificationCenter.default.removeObserver(observer) }
@@ -350,6 +374,8 @@ struct SheetField {
     var choosesFolder = false
     // Gray text shown while the field is empty, from every field's current text, in order.
     var placeholder: (([String]) -> String)? = nil
+    // The sheet's button stays disabled while this field is empty.
+    var required = false
 }
 
 // What one list page differs in; addEntryListPage builds the rest the same way.
@@ -359,9 +385,8 @@ struct ListPageSpec {
     // The empty and no-match labels: "Applications".
     var pluralName: String
     var nameWidth: CGFloat = 244
-    // What Caps + an entry's shortcut does, first in ?: "Switch to the app". Nil for a
-    // list without shortcuts (the Shelf): no Shortcut column and no shortcut help.
-    var shortcutAction: String?
+    // What Caps + an entry's shortcut does, first in ?: "Switch to the app".
+    var shortcutAction: String
     // This page's own ? rows, between the shared ones.
     var help: [HelpButton.Item]
     var add: () -> Void

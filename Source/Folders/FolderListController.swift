@@ -1,7 +1,6 @@
 import Cocoa
 
-// The Folders page of Preferences. Each folder view owns its actions; focus never
-// decides which selection to use. Rows are the folders matching the search, in
+// The Folders page of Preferences. Rows are the folders matching the search, in
 // `owner.folders` order; `entryIndex(forRow:)` maps a row back to its folder.
 final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SearchableList {
     unowned let owner: AppDelegate
@@ -24,23 +23,19 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
         }
         table.openSelection = { [weak self] in
             guard let self = self else { return }
-            self.owner.openSelectedFolders(self.selectedEntryIndices, in: self.table)
+            self.owner.openSelectedFolders(self.selectedEntryIndices)
         }
         table.editSelection = { [weak self] in
             guard let self = self, self.selectedEntryIndices.count == 1,
                   let index = self.selectedEntryIndices.first else { return }
-            self.owner.editFolder(at: index, in: self.table)
+            self.owner.editFolder(at: index)
         }
         connectSearch()
-    }
-    func reload() {
-        table.reloadData()
-        updateEmptyLabel()
     }
     // Double-click edits the folder.
     @objc private func doubleClick() {
         guard let index = entryIndex(forRow: table.clickedRow) else { return }
-        owner.editFolder(at: index, in: table)
+        owner.editFolder(at: index)
     }
     func tableView(_ tableView: NSTableView, selectionIndexesForProposedSelection proposedSelectionIndexes: IndexSet) -> IndexSet {
         // Keep click/keyboard selection, but do not extend it by sweeping the mouse.
@@ -48,31 +43,23 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
     }
     func numberOfRows(in tableView: NSTableView) -> Int { visibleIndices.count }
     func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? {
-        if let column = tableColumn, tableView.tableColumns.firstIndex(of: column) != 0 { return nil }
-        return entryIndex(forRow: row).map { owner.folders[$0].name }
+        typeSelectName(in: tableView, column: tableColumn, row: row)
     }
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { InsetListRowView() }
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
-        let columnIndex = column.flatMap { tableView.tableColumns.firstIndex(of: $0) } ?? 0
-        let cellWidth = tableView.frameOfCell(atColumn: columnIndex, row: row).width
         guard let index = entryIndex(forRow: row) else { return nil }
-        let cell = NSView(frame: NSRect(x: 0, y: 0, width: cellWidth, height: AppDelegate.appRowHeight))
+        let (cell, columnIndex, width) = owner.makeListCell(in: tableView, column: column, row: row)
         let folder = owner.folders[index]
-        if columnIndex == 1 {
-            // The same shortcut field as App List.
-            owner.addShortcutRecorder(to: cell, width: cellWidth, for: .folder(path: folder.path),
+        if columnIndex == 0 {
+            let name = owner.addListName(folder.name, icon: owner.makeListIcon(path: folder.path), to: cell, width: width)
+            // No path column: pointing at the folder shows where it is ("~/Projects/Clutch").
+            let location = (folder.path as NSString).abbreviatingWithTildeInPath
+            cell.toolTip = location
+            name.toolTip = location
+        } else {
+            owner.addShortcutRecorder(to: cell, width: width, for: .folder(path: folder.path),
                                       keys: folder.keys, table: tableView, row: row)
-            return cell
         }
-        let icon = owner.makeListIcon(path: folder.path)
-        let name = NSTextField(labelWithString: folder.name)
-        owner.configureListName(name, width: cellWidth)
-        cell.addSubview(icon)
-        // No path column: pointing at the folder shows where it is ("~/Projects/Clutch").
-        let location = (folder.path as NSString).abbreviatingWithTildeInPath
-        cell.toolTip = location
-        name.toolTip = location
-        cell.addSubview(name)
         return cell
     }
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
@@ -95,7 +82,7 @@ final class FolderListController: NSObject, NSTableViewDataSource, NSTableViewDe
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo,
                    row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
         guard filter.isEmpty, info.draggingSource as? NSTableView === tableView,
-              let selection = FolderOrder.move(&owner.folders, paths: draggedFolderPaths(info), to: row) else { return false }
+              let selection = ListOrder.move(&owner.folders, paths: draggedFolderPaths(info), to: row) else { return false }
         owner.saveFolders()
         tableView.selectRowIndexes(selection, byExtendingSelection: false)
         if let first = selection.first { tableView.scrollRowToVisible(first) }

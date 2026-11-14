@@ -7,11 +7,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                  (id: "apps", title: "App List", symbol: "list.bullet.rectangle"),
                                  (id: "folders", title: "Folders", symbol: "folder"),
                                  (id: "websites", title: "Websites", symbol: "globe"),
-                                 (id: "windows", title: "Windows", symbol: "macwindow"),
-                                 (id: "shelf", title: "Shelf", symbol: "tray.full")]
-    // Exactly fits the Windows list without scrolling: its rows plus the list chrome
-    // from makeListScroll (33 bottom bar, 28 header, 6 + 6 spacing). 7 rows → 311.
-    static let preferenceSize = NSSize(width: 460, height: 73 + CGFloat(WindowCommand.allCases.count) * appRowHeight)
+                                 (id: "windows", title: "Windows", symbol: "macwindow")]
+    // The Windows list's rows plus the list chrome (ListGeometry.chromeHeight), and one
+    // more row of room so General is not crowded. 7 + 1 rows → 345.
+    static let preferenceSize = NSSize(width: 460, height: ListGeometry.chromeHeight + CGFloat(WindowCommand.allCases.count + 1) * appRowHeight)
+    // The Shelf picker's list, which has no column header: 8 rows above the bottom bar → 311.
+    static let shelfRows = 8
+    static let shelfListSize = NSSize(width: 460, height: ListGeometry.bottomBarHeight + ListGeometry.bottomRuleHeight
+                                                          + ListGeometry.spacing + CGFloat(shelfRows) * appRowHeight)
     static let appRowHeight: CGFloat = 34
     static let listIconFrame = NSRect(x: ListGeometry.leadingInset, y: 7, width: 20, height: 20)
     static let listNameFrame = NSRect(x: ListGeometry.leadingInset + 28, y: 7, width: 172, height: 18)
@@ -49,15 +52,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var windowShortcuts = WindowShortcuts.load()
     var windowShortcutList: WindowShortcutListController?
     var showingLaunchConfirmation = false
-    var closingPreferencesForAction = false
-    var preferencesFolderList: FolderListController?
+    var folderList: FolderListController?
     var folders: [FolderEntry] = []
     let folderDragType = NSPasteboard.PasteboardType("local.maxvoid.Clutch.folder")
-    // Caps + Space: the Shelf picker and its files, newest first; also the Shelf page.
+    // Caps + Space: the Shelf picker and its files, in the user's order (new files on top).
     var shelf: [ShelfEntry] = []
     var shelfPanel: ShelfPanel?
     var shelfList: ShelfListController?
-    var preferencesShelfList: ShelfPreferencesListController?
     var websites: [WebsiteEntry] = []
     var websiteList: WebsiteListController?
     let browserTabs = BrowserTabs()

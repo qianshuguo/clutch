@@ -7,6 +7,16 @@ enum ListGeometry {
     static let labelTextInset: CGFloat = 2
     static let leadingInset: CGFloat = 16
     static let trailingInset: CGFloat = 12
+    // A list page from the top: the column header, a gap, the rows, a gap, a rule, and
+    // the bottom bar with its buttons.
+    static let headerHeight: CGFloat = 28
+    static let spacing: CGFloat = 6
+    static let bottomRuleHeight: CGFloat = 1
+    static let bottomBarHeight: CGFloat = 32
+    // Everything on a list page except its rows: 73.
+    static let chromeHeight = headerHeight + spacing * 2 + bottomRuleHeight + bottomBarHeight
+    // Where a control of `height` sits to be centered in the bottom bar.
+    static func bottomBarY(_ height: CGFloat) -> CGFloat { (bottomBarHeight - height) / 2 }
 }
 
 // Match Mos's shared backdrop; lists and scrollers reveal this same surface.
@@ -62,15 +72,7 @@ final class PlainListHeaderView: NSView {
         guard let table = tableView, !table.tableColumns.isEmpty else { return }
         bottomRule.frame = NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1)
         let firstColumn = table.tableColumns[0]
-        guard table.tableColumns.count == 2 else {
-            // One column (the Shelf): its title only.
-            let body = table.numberOfRows > 0 ? table.frameOfCell(atColumn: 0, row: 0)
-                : NSRect(x: 0, y: 0, width: firstColumn.width, height: 0)
-            firstLabel.stringValue = firstColumn.title
-            secondLabel.stringValue = ""
-            firstLabel.frame = NSRect(x: body.minX + ListGeometry.leadingInset, y: 7, width: max(0, body.width - ListGeometry.leadingInset - ListGeometry.trailingInset), height: 18)
-            return
-        }
+        guard table.tableColumns.count == 2 else { return }
         let secondColumn = table.tableColumns[1]
         let firstBody = table.numberOfRows > 0 ? table.frameOfCell(atColumn: 0, row: 0)
             : NSRect(x: 0, y: 0, width: firstColumn.width, height: 0)
@@ -147,11 +149,12 @@ enum ListSelection {
     // like Finder, so the context menu acts on it, and makes the table first responder
     // so the selection shows in the accent color. Drawn now: the menu's tracking loop
     // starts before the next display pass. nil outside the rows.
+    // The Shelf picker passes `focus: false`: its search field keeps the keyboard.
     @discardableResult
-    static func selectForMenu(_ event: NSEvent, in table: NSTableView) -> Int? {
+    static func selectForMenu(_ event: NSEvent, in table: NSTableView, focus: Bool = true) -> Int? {
         let row = table.row(at: table.convert(event.locationInWindow, from: nil))
         guard row >= 0 else { return nil }
-        if table.window?.firstResponder !== table { table.window?.makeFirstResponder(table) }
+        if focus, table.window?.firstResponder !== table { table.window?.makeFirstResponder(table) }
         if !table.selectedRowIndexes.contains(row) {
             table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
@@ -182,10 +185,6 @@ final class EntryTableView: NSTableView {
     var openSelection: (() -> Void)?
     var editSelection: (() -> Void)?
     var revealSelection: (() -> Void)?
-    override func rightMouseDown(with event: NSEvent) {
-        ListSelection.selectForMenu(event, in: self)
-        super.rightMouseDown(with: event)
-    }
     override func menu(for event: NSEvent) -> NSMenu? {
         guard ListSelection.selectForMenu(event, in: self) != nil else { return nil }
         let menu = NSMenu()
@@ -193,13 +192,10 @@ final class EntryTableView: NSTableView {
         let open = NSMenuItem(title: "Open", action: #selector(openSelected), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        // Lists whose entries have nothing to edit (the Shelf) leave Edit… out.
-        if editSelection != nil {
-            let edit = NSMenuItem(title: "Edit…", action: #selector(editSelected), keyEquivalent: "")
-            edit.target = self
-            edit.isEnabled = selectedRowIndexes.count == 1
-            menu.addItem(edit)
-        }
+        let edit = NSMenuItem(title: "Edit…", action: #selector(editSelected), keyEquivalent: "")
+        edit.target = self
+        edit.isEnabled = selectedRowIndexes.count == 1
+        menu.addItem(edit)
         if revealSelection != nil {
             menu.addItem(.separator())
             let reveal = NSMenuItem(title: "Reveal in Finder", action: #selector(revealSelected), keyEquivalent: "")
@@ -346,17 +342,35 @@ final class ListSearch: NSObject, NSSearchFieldDelegate {
     }
 }
 
-// A Preferences list page's controller. Its rows are the entries `search` matches, in
-// list order; `entryIndex(forRow:)` maps a row back to its entry. Callers act on
-// `selectedEntryIndices`, never on table rows, since a search may be hiding entries.
-protocol SearchableList: AnyObject {
+// A list whose rows are some of its entries, picked by a search: `entryIndex(forRow:)`
+// maps a row back to its entry. Callers act on `selectedEntryIndices`, never on table
+// rows, since a search may be hiding entries.
+protocol FilteredList: AnyObject {
     // The controller's table (`table`), whatever its class.
     var listTable: NSTableView { get }
+    // Indexes of the entries shown, in row order.
+    var visibleIndices: [Int] { get }
+}
+
+extension FilteredList {
+    func entryIndex(forRow row: Int) -> Int? {
+        let visible = visibleIndices
+        return visible.indices.contains(row) ? visible[row] : nil
+    }
+    var selectedEntryIndices: IndexSet {
+        let visible = visibleIndices
+        return IndexSet(listTable.selectedRowIndexes.filter { visible.indices.contains($0) }.map { visible[$0] })
+    }
+}
+
+// A Preferences list page's controller. Its rows are the entries `search` matches, in
+// list order.
+protocol SearchableList: FilteredList {
     var search: ListSearch { get }
     // Every entry's name, and an ID that stays with it while the search changes, in list order.
     var entryNames: [String] { get }
     var entryIDs: [String] { get }
-    // Reloads the table; calls updateEmptyLabel().
+    // Reloads the table and the label over it. A controller with more to refresh has its own.
     func reload()
 }
 
@@ -364,14 +378,16 @@ extension SearchableList {
     // Text in the search field; empty shows every entry.
     var filter: String { search.query }
     var visibleIndices: [Int] { search.visibleIndices(names: entryNames) }
-    func entryIndex(forRow row: Int) -> Int? {
-        let visible = visibleIndices
-        return visible.indices.contains(row) ? visible[row] : nil
-    }
     func row(forEntryAt index: Int) -> Int? { visibleIndices.firstIndex(of: index) }
-    var selectedEntryIndices: IndexSet {
-        let visible = visibleIndices
-        return IndexSet(listTable.selectedRowIndexes.filter { visible.indices.contains($0) }.map { visible[$0] })
+    func reload() {
+        listTable.reloadData()
+        updateEmptyLabel()
+    }
+    // Typing in the list jumps to an entry by name. Shortcut fields take no part: they
+    // all start with “⇪”.
+    func typeSelectName(in tableView: NSTableView, column: NSTableColumn?, row: Int) -> String? {
+        if let column = column, tableView.tableColumns.firstIndex(of: column) != 0 { return nil }
+        return entryIndex(forRow: row).map { entryNames[$0] }
     }
     // Wires the search to this list. Called once, from the controller's init.
     func connectSearch() {

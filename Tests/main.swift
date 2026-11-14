@@ -79,7 +79,7 @@ expect(state.pressedKeys.isEmpty && !state.showsKeyHint, "releasing Caps clears 
 state.reset()
 capsDown(at: 800)
 _ = state.route(key: KeyCode.space, down: true, repeated: false, bound: false)
-expect(state.showsKeyHint && state.launchCandidate == nil, "Caps + Space shows like any unassigned key")
+expect(!state.showsKeyHint && state.launchCandidate == nil, "Caps + Space opens the Shelf, so it shows no key hint")
 state.reset()
 // Escape while Caps is held ends the gesture: nothing runs, nothing more is shown.
 capsDown(at: 900)
@@ -618,22 +618,24 @@ expect(state.route(key: 18, down: true, repeated: false, bound: true).pickerNumb
 state.reset()
 print("PASS: Shelf picker numbers, bounds, letters, arrows, Command, release confirmation, app shortcut isolation")
 
-// The Shelf: newest first, re-adding moves up, opening moves up, and only missing
+// The Shelf: new files on top, re-adding moves up, rows are dragged to reorder, and only missing
 // files leave by themselves.
 do {
-    let day: TimeInterval = 24 * 60 * 60
-    let start = Date(timeIntervalSinceReferenceDate: 1_000_000)
     var shelf: [ShelfEntry] = []
-    expect(Shelf.add(["/a/One.pdf", "/b/Two.txt", "/a/One.pdf"], to: &shelf, at: start) == ["/a/One.pdf", "/b/Two.txt"],
+    expect(Shelf.add(["/a/One.pdf", "/b/Two.txt", "/a/One.pdf"], to: &shelf) == ["/a/One.pdf", "/b/Two.txt"],
            "duplicates in one add are dropped")
     expect(shelf.map { $0.path } == ["/a/One.pdf", "/b/Two.txt"], "added files go on top, in order")
-    Shelf.add(["/c/Three.key"], to: &shelf, at: start + day)
+    Shelf.add(["/c/Three.key"], to: &shelf)
     expect(shelf.map { $0.path } == ["/c/Three.key", "/a/One.pdf", "/b/Two.txt"], "newer files come first")
-    Shelf.add(["/b/Two.txt"], to: &shelf, at: start + 2 * day)
-    expect(shelf.map { $0.path } == ["/b/Two.txt", "/c/Three.key", "/a/One.pdf"] && shelf[0].added == start,
-           "re-adding a file moves it up and keeps when it was first added")
-    Shelf.markUsed(["/a/One.pdf", "/elsewhere"], in: &shelf, at: start + 3 * day)
-    expect(shelf.map { $0.path } == ["/a/One.pdf", "/b/Two.txt", "/c/Three.key"], "opening moves a file up; unknown paths are ignored")
+    Shelf.add(["/b/Two.txt"], to: &shelf)
+    expect(shelf.map { $0.path } == ["/b/Two.txt", "/c/Three.key", "/a/One.pdf"],
+           "re-adding a file moves it up")
+    expect(ListOrder.move(&shelf, paths: ["/a/One.pdf"], to: 0) == IndexSet(integer: 0)
+           && shelf.map { $0.path } == ["/a/One.pdf", "/b/Two.txt", "/c/Three.key"], "a dragged file moves up")
+    expect(ListOrder.move(&shelf, paths: ["/a/One.pdf", "/b/Two.txt"], to: 3) == IndexSet(integersIn: 1..<3)
+           && shelf.map { $0.path } == ["/c/Three.key", "/a/One.pdf", "/b/Two.txt"], "dragged files move down, in order")
+    expect(ListOrder.move(&shelf, paths: ["/elsewhere"], to: 0) == nil, "a path not on the Shelf moves nothing")
+    _ = ListOrder.move(&shelf, paths: ["/a/One.pdf"], to: 0)
     expect(!Shelf.prune(&shelf, exists: { _ in true }) && shelf.count == 3, "files never leave for their age")
     expect(Shelf.prune(&shelf, exists: { $0 != "/b/Two.txt" }) && shelf.map { $0.path } == ["/a/One.pdf", "/c/Three.key"],
            "a file that no longer exists leaves")
@@ -654,7 +656,7 @@ do {
            "equal matches keep Shelf order")
     expect(Shelf.ordered(["a", "b"], query: " ") == [0, 1], "an empty search shows every file")
 }
-print("PASS: Shelf order, re-adding, opening, no expiry, missing files, search")
+print("PASS: Shelf order, re-adding, dragging, no expiry, missing files, search")
 
 expect(FolderEntry(name: "projects", path: "/tmp/projects").originalName == "projects"
        && !FolderEntry(name: "projects", path: "/tmp/projects").isRenamed
@@ -668,25 +670,25 @@ print("PASS: folder persistence")
 
 
 var ordered = (0..<4).map { FolderEntry(name: "Folder \($0)", path: "/tmp/\($0)") }
-expect(FolderOrder.move(&ordered, paths: ["/tmp/0"], to: 4) == IndexSet(integer: 3), "drag first folder to end")
+expect(ListOrder.move(&ordered, paths: ["/tmp/0"], to: 4) == IndexSet(integer: 3), "drag first folder to end")
 expect(ordered.map { $0.path } == ["/tmp/1", "/tmp/2", "/tmp/3", "/tmp/0"], "downward drop adjusts insertion boundary")
-expect(FolderOrder.move(&ordered, paths: ["/tmp/0"], to: 0) == IndexSet(integer: 0), "drag last folder to beginning")
+expect(ListOrder.move(&ordered, paths: ["/tmp/0"], to: 0) == IndexSet(integer: 0), "drag last folder to beginning")
 expect(ordered.map { $0.path } == ["/tmp/0", "/tmp/1", "/tmp/2", "/tmp/3"], "upward drop preserves other rows")
-expect(FolderOrder.move(&ordered, paths: ["/tmp/1"], to: 2) == IndexSet(integer: 1), "drop beside same row keeps order")
-expect(FolderOrder.move(&ordered, paths: ["/missing"], to: 0) == nil, "unknown dragged folder is rejected")
-expect(FolderOrder.move(&ordered, paths: ["/tmp/0"], to: 5) == nil, "invalid drop boundary is rejected")
+expect(ListOrder.move(&ordered, paths: ["/tmp/1"], to: 2) == IndexSet(integer: 1), "drop beside same row keeps order")
+expect(ListOrder.move(&ordered, paths: ["/missing"], to: 0) == nil, "unknown dragged folder is rejected")
+expect(ListOrder.move(&ordered, paths: ["/tmp/0"], to: 5) == nil, "invalid drop boundary is rejected")
 let savedOrder = try JSONDecoder().decode([FolderEntry].self, from: JSONEncoder().encode(ordered))
 expect(savedOrder.map { $0.path } == ordered.map { $0.path }, "custom order persists")
 print("PASS: single folder drag order, boundary validation, persisted order")
 
 var groupOrder = (0..<6).map { FolderEntry(name: "Folder \($0)", path: "/tmp/\($0)") }
-expect(FolderOrder.move(&groupOrder, paths: ["/tmp/3", "/tmp/1"], to: 6) == IndexSet(integersIn: 4..<6), "multi-row drop selects moved block")
+expect(ListOrder.move(&groupOrder, paths: ["/tmp/3", "/tmp/1"], to: 6) == IndexSet(integersIn: 4..<6), "multi-row drop selects moved block")
 expect(groupOrder.map { $0.path } == ["/tmp/0", "/tmp/2", "/tmp/4", "/tmp/5", "/tmp/1", "/tmp/3"], "group drag preserves original relative order")
-expect(FolderOrder.move(&groupOrder, paths: ["/tmp/1", "/tmp/3"], to: 0) == IndexSet(integersIn: 0..<2), "multi-row drag upward")
+expect(ListOrder.move(&groupOrder, paths: ["/tmp/1", "/tmp/3"], to: 0) == IndexSet(integersIn: 0..<2), "multi-row drag upward")
 expect(groupOrder.map { $0.path } == ["/tmp/1", "/tmp/3", "/tmp/0", "/tmp/2", "/tmp/4", "/tmp/5"], "group moves to start")
 let beforeInvalidDrop = groupOrder.map { $0.path }
-expect(FolderOrder.move(&groupOrder, paths: ["/tmp/1", "/missing"], to: 2) == nil, "partly invalid group is rejected")
-expect(FolderOrder.move(&groupOrder, paths: [], to: 0) == nil, "empty group is rejected")
+expect(ListOrder.move(&groupOrder, paths: ["/tmp/1", "/missing"], to: 2) == nil, "partly invalid group is rejected")
+expect(ListOrder.move(&groupOrder, paths: [], to: 0) == nil, "empty group is rejected")
 expect(groupOrder.map { $0.path } == beforeInvalidDrop, "invalid group drop leaves list unchanged")
 print("PASS: multiple folder drag, stable ordering, selection, invalid group rejection")
 

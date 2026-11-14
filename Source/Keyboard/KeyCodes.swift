@@ -12,6 +12,7 @@ enum KeyCode {
     // when recording one, so it cannot be part of an app, folder or website shortcut.
     // A window action can use it, since those take one key (Restore by default).
     static let delete: UInt16 = 51
+    static let tab: UInt16 = 48
     static let space: UInt16 = 49
     static let escape: UInt16 = 53
     static let keypadEnter: UInt16 = 76
@@ -22,7 +23,8 @@ enum KeyCode {
     static func isReturn(_ code: UInt16) -> Bool { code == returnKey || code == keypadEnter }
 }
 
-let keys: [(String, UInt16)] = [
+// Letters and digits, which the Shelf picker also takes as selection keys.
+private let letterAndDigitKeys: [(name: String, code: UInt16)] = [
     ("A",0),("B",11),("C",8),("D",2),("E",14),("F",3),("G",5),
     ("H",4),("I",34),("J",38),("K",40),("L",37),("M",46),("N",45),
     ("O",31),("P",35),("Q",12),("R",15),("S",1),("T",17),("U",32),
@@ -31,9 +33,9 @@ let keys: [(String, UInt16)] = [
     ("6",22),("7",26),("8",28),("9",25)]
 
 extension KeyCode {
-    static let lettersAndDigits: [UInt16] = keys.map { $0.1 }
+    static let lettersAndDigits: [UInt16] = letterAndDigitKeys.map { $0.code }
     // Top-row 1…9, in order; index 0 selects the first row.
-    static let digits1to9: [UInt16] = (1...9).map { digit in keys.first { $0.0 == String(digit) }!.1 }
+    static let digits1to9: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25]
 }
 
 // The stored value for "no key" in saved App List and Windows shortcuts.
@@ -50,9 +52,11 @@ extension KeyShortcut {
     func extends(_ sequence: [UInt16]) -> Bool { keys.count > sequence.count && keys.starts(with: sequence) }
 }
 
-let extraKeys: [UInt16: String] = [36:"Return",48:"Tab",49:"Space",51:"⌫",117:"⌦",
+private let otherKeyNames: [UInt16: String] = [36:"Return",48:"Tab",49:"Space",51:"⌫",117:"⌦",
     123:"←",124:"→",125:"↓",126:"↑",115:"Home",119:"End",116:"PgUp",121:"PgDn",
     27:"−",24:"=",33:"[",30:"]",42:"\\",41:";",39:"'",43:",",47:".",44:"/",50:"`",
     122:"F1",120:"F2",99:"F3",118:"F4",96:"F5",97:"F6",98:"F7",100:"F8",101:"F9",
     109:"F10",103:"F11",111:"F12",105:"F13",107:"F14",113:"F15",106:"F16",64:"F17",80:"F19",90:"F20"]
-func keyName(_ code: UInt16) -> String? { keys.first { $0.1 == code }?.0 ?? extraKeys[code] }
+// Every key a shortcut can use, by key code.
+private let keyNames: [UInt16: String] = otherKeyNames.merging(letterAndDigitKeys.map { ($0.code, $0.name) }) { _, letter in letter }
+func keyName(_ code: UInt16) -> String? { keyNames[code] }

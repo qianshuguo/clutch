@@ -9,18 +9,16 @@ extension AppDelegate {
     func saveShelf() {
         StoredList.save(shelf, forKey: DefaultsKey.shelf)
         shelfList?.reload()
-        preferencesShelfList?.reload()
     }
 
     // Caps + Space, or Shelf… in the ⇪+ menu.
     @objc func showShelf() {
         guard !showingLaunchConfirmation else { return }
-        closePreferencesForAction(keepingApplicationActive: true)
         // Files that were moved or deleted leave first.
         if Shelf.prune(&shelf) { saveShelf() }
         if shelfPanel == nil { createShelfPanel() }
         guard let panel = shelfPanel, let controller = shelfList else { return }
-        // Each opening starts a new search, at the newest file.
+        // Each opening starts a new search, at the top file.
         controller.setFilter("")
         controller.reload()
         controller.select(row: 0)
@@ -31,7 +29,7 @@ extension AppDelegate {
         panel.makeFirstResponder(controller.searchField ?? controller.table)
     }
     private func createShelfPanel() {
-        let listSize = Self.preferenceSize
+        let listSize = Self.shelfListSize
         let panelSize = NSSize(width: listSize.width, height: listSize.height + Self.shelfSearchBarHeight)
         // A titled panel for the native rounded corners, with its title bar hidden.
         // Non-activating: it becomes key while the app in front stays active. The style
@@ -60,7 +58,7 @@ extension AppDelegate {
         // The list between the search field and the key hints.
         let scroll = makeListScroll(size: listSize)
         let table = controller.table
-        table.style = .plain
+        styleList(table)
         // Like the other lists: a fixed column that leaves the scrollbar lane free in
         // both scroller styles, so an overlay scroller never covers the ⇪1–⇪9 hints.
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("file"))
@@ -70,11 +68,6 @@ extension AppDelegate {
         column.width = columnWidth
         column.resizingMask = []
         table.addTableColumn(column)
-        table.headerView = nil
-        table.rowHeight = Self.appRowHeight
-        table.intercellSpacing = .zero
-        table.backgroundColor = .clear
-        table.columnAutoresizingStyle = .noColumnAutoresizing
         scroll.documentView = table
         scroll.tile()
         shell.addSubview(scroll)
@@ -87,7 +80,7 @@ extension AppDelegate {
         hints.font = .systemFont(ofSize: 11)
         hints.textColor = .secondaryLabelColor
         hints.alignment = .center
-        hints.frame = NSRect(x: 12, y: ((32 - 16) / 2).rounded(), width: listSize.width - 24, height: 16)
+        hints.frame = NSRect(x: 12, y: ListGeometry.bottomBarY(16).rounded(), width: listSize.width - 24, height: 16)
         hints.autoresizingMask = [.width]
         shell.addSubview(hints)
 
@@ -128,10 +121,9 @@ extension AppDelegate {
     }
 
     // The open picker, when it has focus in its list or search field, so Caps + numbers,
-    // letters and arrows select a file. Nil while a menu or sheet has focus.
+    // letters and arrows select a file. Nil while a menu has focus.
     var shelfSelectionPanel: ShelfPanel? {
-        guard let panel = shelfPanel, panel.isKeyWindow, panel.attachedSheet == nil,
-              let controller = shelfList else { return nil }
+        guard let panel = shelfPanel, panel.isKeyWindow, let controller = shelfList else { return nil }
         // The search field's field editor has the focus while typing.
         let searching = (panel.firstResponder as? NSTextView).map { editor in
             controller.searchField.map { editor.delegate === $0 } ?? false
@@ -140,13 +132,13 @@ extension AppDelegate {
         return panel
     }
 
-    // MARK: Actions (indexes into `shelf`), from the picker and the Shelf page of Preferences
+    // MARK: Actions (indexes into `shelf`)
 
     // Returns the paths added (or moved up), in the order they now head the list.
     @discardableResult
     func addShelfFiles(_ urls: [URL]) -> [String] {
         let paths = urls.map { $0.standardizedFileURL.path }
-        let added = Shelf.add(paths, to: &shelf, at: Date())
+        let added = Shelf.add(paths, to: &shelf)
         guard !added.isEmpty else { return [] }
         saveShelf()
         // Dropped from another app: give the panel the keyboard again to show what was
@@ -161,22 +153,24 @@ extension AppDelegate {
     func openShelfFiles(_ indexes: IndexSet) {
         let selected = indexes.compactMap { shelf.indices.contains($0) ? shelf[$0] : nil }
         guard !selected.isEmpty else { NSSound.beep(); return }
-        var opened: [String] = [], missing: [String] = []
-        for entry in selected {
-            if FileManager.default.fileExists(atPath: entry.path) { closePreferencesForAction() }
-            if FileManager.default.fileExists(atPath: entry.path),
-               NSWorkspace.shared.open(URL(fileURLWithPath: entry.path)) {
-                opened.append(entry.path)
-            } else {
-                missing.append(entry.path)
+        let opening = selected.map { $0.path }.filter { FileManager.default.fileExists(atPath: $0) }
+        let missing = selected.map { $0.path }.filter { !opening.contains($0) }
+        if !missing.isEmpty {
+            shelf.removeAll { entry in missing.contains(entry.path) }
+            saveShelf()
+        }
+        // The panel goes at once; Launch Services can take a moment to start the file's
+        // app, so the files open asynchronously and the app comes forward when ready.
+        if !opening.isEmpty { shelfPanel?.close() }
+        if !missing.isEmpty { reportShelfFailures(missing) }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        for path in opening {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path), configuration: configuration) { [weak self] _, error in
+                guard error != nil else { return }
+                DispatchQueue.main.async { self?.reportShelfFailures([path]) }
             }
         }
-        Shelf.markUsed(opened, in: &shelf, at: Date())
-        shelf.removeAll { entry in missing.contains(entry.path) && !FileManager.default.fileExists(atPath: entry.path) }
-        saveShelf()
-        // The opened file's app comes forward, which closes the panel.
-        if !opened.isEmpty { shelfPanel?.close() }
-        if !missing.isEmpty { reportShelfFailures(missing) }
     }
     func revealShelfFiles(_ indexes: IndexSet) {
         let urls = indexes.compactMap { shelf.indices.contains($0) ? shelf[$0].path : nil }
@@ -186,10 +180,10 @@ extension AppDelegate {
         shelfPanel?.close()
         NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
-    // Takes the files off the Shelf; the files themselves are left alone. The row of
-    // `table` that took the first one's place is selected.
-    func removeShelfFiles(_ indexes: IndexSet, in table: NSTableView) {
-        guard table.window?.attachedSheet == nil else { return }
+    // Takes the files off the Shelf; the files themselves are left alone. The row that
+    // took the first one's place is selected.
+    func removeShelfFiles(_ indexes: IndexSet) {
+        guard let table = shelfList?.table else { return }
         let firstRow = table.selectedRowIndexes.first ?? 0
         guard ListSelection.remove(indexes, from: &shelf) else { NSSound.beep(); return }
         saveShelf()

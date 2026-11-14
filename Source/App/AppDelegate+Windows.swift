@@ -6,18 +6,6 @@ extension AppDelegate: NSWindowDelegate {
         guard window?.isVisible != true, !showingLaunchConfirmation else { return }
         if NSApp.activationPolicy() != .accessory { NSApp.setActivationPolicy(.accessory) }
     }
-    func closePreferencesForAction(keepingApplicationActive: Bool = false) {
-        guard let window = window, window.isVisible else { return }
-        // Keep held Caps and consumed key releases intact as the action takes focus.
-        closingPreferencesForAction = true
-        defer { closingPreferencesForAction = false }
-        window.close()
-        // Changing activation policy can deactivate the app. Keep the current
-        // policy when another local panel is about to take over, or its resignKey
-        // handler would immediately dismiss it. External targets still receive
-        // focus only after the Dock transition.
-        if !keepingApplicationActive { hideDockIfIdle() }
-    }
     @objc func showSettings() {
         // A visible Preferences window participates in the Dock and Command-Tab.
         NSApp.setActivationPolicy(.regular)
@@ -26,8 +14,10 @@ extension AppDelegate: NSWindowDelegate {
         window.makeKeyAndOrderFront(nil); NSApp.activateFromBackground()
     }
     func windowDidResignKey(_ notification: Notification) {
+        // Only a recording ends here. A held Caps gesture survives focus moving
+        // to another app or panel: its state lives with the event tap, not with
+        // any window, and missed releases are caught there from hardware state.
         (window?.firstResponder as? KeyRecorder)?.cancelRecording()
-        if !closingPreferencesForAction { state.cancelGesture() }
     }
     func windowWillClose(_ notification: Notification) {
         if let closed = notification.object as? NSWindow, closed === shelfPanel {
@@ -35,7 +25,6 @@ extension AppDelegate: NSWindowDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self, self.shelfPanel === closed, !closed.isVisible else { return }
                 self.shelfPanel = nil; self.shelfList = nil
-                self.hideDockIfIdle()
             }
             return
         }
@@ -44,11 +33,11 @@ extension AppDelegate: NSWindowDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, self.window === closed, !closed.isVisible else { return }
             self.hideDockIfIdle()
-            self.window = nil; self.applicationList = nil; self.preferencesFolderList = nil
+            self.window = nil; self.applicationList = nil; self.folderList = nil
             self.toggleButton = nil; self.loginCheckbox = nil; self.hideCheckbox = nil
             self.askBeforeOpeningCheckbox = nil
             self.accessibilityHint = nil; self.accessibilityNotice = nil; self.windowShortcutList = nil; self.websiteList = nil
-            self.preferencesShelfList = nil; self.pages = []
+            self.pages = []
         }
     }
 }
@@ -68,6 +57,11 @@ extension NSApplication {
 extension NSRunningApplication {
     func bringForward(allWindows: Bool = false) {
         activate(options: allWindows ? [.activateAllWindows, .activateIgnoringOtherApps] : [.activateIgnoringOtherApps])
+    }
+    // The same for an app that may be hidden (⌘H).
+    func unhideAndBringForward(allWindows: Bool = false) {
+        unhide()
+        bringForward(allWindows: allWindows)
     }
 }
 

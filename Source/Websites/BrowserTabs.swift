@@ -36,6 +36,11 @@ struct Browser {
               let scripting = Self.kind(of: bundleID) else { return nil }
         return Browser(bundleID: bundleID, kind: scripting, name: app.name)
     }
+    // The same, with its running instance; nil when it is not running either.
+    static func runningScriptableDefault() -> (browser: Browser, running: NSRunningApplication)? {
+        guard let browser = scriptableDefault(), let running = browser.running else { return nil }
+        return (browser, running)
+    }
     var running: NSRunningApplication? {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { !$0.isTerminated }
     }
@@ -43,6 +48,9 @@ struct Browser {
     var tabClass: String { kind == .safari ? "bTab" : "CrTb" }
     var urlProperty: String { kind == .safari ? "pURL" : "URL " }
 }
+
+// errAEEventNotPermitted: the person turned Clutch off for this browser under Automation.
+private let automationNotPermitted = -1743
 
 // Lists a running browser's tabs and switches to one. Each Apple Event can wait for a
 // busy browser, and the first one for the person to answer the Automation prompt, so
@@ -57,44 +65,56 @@ struct Browser {
 // it. An event to a process that is gone fails instead (procNotFound, connectionInvalid),
 // and the caller hands the address to the system.
 final class BrowserTabs {
-    enum Outcome { case focused, notFound, notPermitted, failed }
+    enum Outcome { case focused, opened, notFound, notPermitted, failed }
 
     private let queue = DispatchQueue(label: "local.maxvoid.Clutch.browser-tabs", qos: .userInteractive)
-    // errAEEventNotPermitted: the person turned Clutch off for this browser under Automation.
-    private static let notPermitted = -1743
+
+    // Asks for Automation access to the process, then runs `work` with events to it.
+    // Returns `denied` when access is refused, there or by any event `work` sends, and
+    // `failed` for every other error.
+    private static func withEvents<T>(to processID: pid_t, denied: T, failed: T,
+                                      _ work: (ProcessEvents) throws -> T) -> T {
+        let permission = Self.permission(for: processID)
+        guard permission != automationNotPermitted else { return denied }
+        guard permission == 0 else { return failed }
+        do {
+            return try work(ProcessEvents(processID: processID))
+        } catch {
+            return error.code == automationNotPermitted ? denied : failed
+        }
+    }
 
     // Switches to the tab WebsiteTabChoice picks for `site`, leaving out tabs that belong
-    // to `others` inside it. `completion` runs on the main thread, through the run loop
-    // rather than the main queue: it may start the launch confirmation's modal session,
-    // which would hold up every later main-queue block.
+    // to `others` inside it. With no such tab it reports `.notFound`, or, given `url`,
+    // opens it in a new tab right away (`.opened`), from the windows already listed.
+    // `completion` runs on the main thread, through the run loop rather than the main
+    // queue: it may start the launch confirmation's modal session, which would hold up
+    // every later main-queue block.
     func focus(_ site: WebsiteScope, others: [WebsiteScope], in browser: Browser, browserFrontmost: Bool,
-               completion: @escaping (Outcome) -> Void) {
+               orOpen url: URL? = nil, completion: @escaping (Outcome) -> Void) {
         let processID = browser.running?.processIdentifier
         queue.async {
             let outcome = processID.map { Self.focus(site, others: others, in: browser, processID: $0,
-                                                     browserFrontmost: browserFrontmost) } ?? .failed
+                                                     browserFrontmost: browserFrontmost, orOpen: url) } ?? .failed
             performOnMainRunLoop { completion(outcome) }
         }
     }
     private static func focus(_ site: WebsiteScope, others: [WebsiteScope], in browser: Browser, processID: pid_t,
-                              browserFrontmost: Bool) -> Outcome {
-        let permission = Self.permission(for: processID)
-        guard permission != notPermitted else { return .notPermitted }
-        guard permission == 0 else { return .failed }
-        let events = ProcessEvents(processID: processID)
-        let listed: [ListedWindow]
-        do { listed = try windows(of: browser, through: events) } catch {
-            return error.code == notPermitted ? .notPermitted : .failed
-        }
-        // Only the window used last counts: a matching tab in another window is left
-        // alone, and without one there the address opens in a new tab of that window.
-        // When that window cannot be told apart, every window counts, front first.
-        var windows = listed
-        if let last = lastUsed(windows, processID: processID) { windows = [windows[last]] }
-        guard let tab = WebsiteTabChoice.choose(site, tabs: tabs(of: windows), browserFrontmost: browserFrontmost,
-                                                others: others),
-              let window = windows.first(where: { $0.id == tab.window }) else { return .notFound }
-        do {
+                              browserFrontmost: Bool, orOpen url: URL?) -> Outcome {
+        withEvents(to: processID, denied: .notPermitted, failed: .failed) { events -> Outcome in
+            // Only the window used last counts: a matching tab in another window is left
+            // alone, and without one there the address opens in a new tab of that window.
+            // When that window cannot be told apart, every window counts, front first.
+            var windows = try Self.windows(of: browser, through: events)
+            if let last = lastUsed(windows, processID: processID) { windows = [windows[last]] }
+            guard let tab = WebsiteTabChoice.choose(site, tabs: tabs(of: windows), browserFrontmost: browserFrontmost,
+                                                    others: others),
+                  let window = windows.first(where: { $0.id == tab.window }) else {
+                guard let url = url else { return .notFound }
+                // `windows` is now the window used last, or all of them, front first.
+                try openTab(url, in: windows.first, of: browser, through: events, processID: processID)
+                return .opened
+            }
             let target = window.specifier
             try? events.set(.property("pmnd", of: target), to: NSAppleEventDescriptor(boolean: false))
             switch browser.kind {
@@ -104,10 +124,8 @@ final class BrowserTabs {
                 try events.set(.property("acTI", of: target), to: NSAppleEventDescriptor(int32: Int32(tab.index)))
             }
             try bringForward(target, through: events, processID: processID)
-        } catch {
-            return error.code == notPermitted ? .notPermitted : .failed
+            return .focused
         }
-        return .focused
     }
 
     // Puts `window` first among the browser's windows, then raises it. `set index` only
@@ -155,48 +173,51 @@ final class BrowserTabs {
         }
     }
     private static func open(_ url: URL, in browser: Browser, processID: pid_t) -> OpenOutcome {
-        let permission = Self.permission(for: processID)
-        guard permission != notPermitted else { return .notPermitted }
-        guard permission == 0 else { return .failed }
-        let events = ProcessEvents(processID: processID)
-        let address = NSAppleEventDescriptor(string: url.absoluteString)
-        do {
+        withEvents(to: processID, denied: .notPermitted, failed: .failed) { events -> OpenOutcome in
             // Windows with tabs, front first; Settings and other windows are left out.
             let windows = try Self.windows(of: browser, through: events)
-            let target: NSAppleEventDescriptor
-            if let window = lastUsed(windows, processID: processID).map({ windows[$0] }) ?? windows.first {
-                target = window.specifier
-                try? events.set(.property("pmnd", of: target), to: NSAppleEventDescriptor(boolean: false))
-                let properties = NSAppleEventDescriptor.record()
-                properties.setDescriptor(address, forKeyword: fourCharCode(browser.urlProperty))
-                let tab = try events.make(browser.tabClass, at: .end(of: .every(browser.tabClass, of: target)),
-                                          properties: properties)
-                switch browser.kind {
-                case .safari:
-                    let made = tab ?? .object(browser.tabClass, form: "indx", .ordinal("last"), of: target)
-                    try events.set(.property("cTab", of: target), to: made)
-                case .chromium:
-                    let count = try events.count(browser.tabClass, in: target)
-                    try events.set(.property("acTI", of: target), to: NSAppleEventDescriptor(int32: Int32(count)))
-                }
-            } else {
-                switch browser.kind {
-                case .safari:
-                    let properties = NSAppleEventDescriptor.record()
-                    properties.setDescriptor(address, forKeyword: fourCharCode("pURL"))
-                    try events.make("docu", properties: properties)
-                case .chromium:
-                    try events.make("cwin")
-                    try events.set(.property("URL ", of: .property("acTa", of: .index("cwin", 1, of: .application))),
-                                   to: address)
-                }
-                target = .index("cwin", 1, of: .application)
-            }
-            try bringForward(target, through: events, processID: processID)
-        } catch {
-            return error.code == notPermitted ? .notPermitted : .failed
+            let window = lastUsed(windows, processID: processID).map { windows[$0] } ?? windows.first
+            try openTab(url, in: window, of: browser, through: events, processID: processID)
+            return .opened
         }
-        return .opened
+    }
+    // Opens `url` in a new tab of `window` and brings that window forward; with no
+    // window, in a new one.
+    private static func openTab(_ url: URL, in window: ListedWindow?, of browser: Browser,
+                                through events: ProcessEvents, processID: pid_t) throws {
+        let address = NSAppleEventDescriptor(string: url.absoluteString)
+        let target: NSAppleEventDescriptor
+        if let window = window {
+            target = window.specifier
+            try? events.set(.property("pmnd", of: target), to: NSAppleEventDescriptor(boolean: false))
+            let properties = NSAppleEventDescriptor.record()
+            properties.setDescriptor(address, forKeyword: fourCharCode(browser.urlProperty))
+            let tab = try events.make(browser.tabClass, at: .end(of: .every(browser.tabClass, of: target)),
+                                      properties: properties)
+            switch browser.kind {
+            case .safari:
+                let made = tab ?? .object(browser.tabClass, form: "indx", .ordinal("last"), of: target)
+                try events.set(.property("cTab", of: target), to: made)
+            case .chromium:
+                let count = try events.count(browser.tabClass, in: target)
+                try events.set(.property("acTI", of: target), to: NSAppleEventDescriptor(int32: Int32(count)))
+            }
+        } else {
+            switch browser.kind {
+            case .safari:
+                let properties = NSAppleEventDescriptor.record()
+                properties.setDescriptor(address, forKeyword: fourCharCode("pURL"))
+                try events.make("docu", properties: properties)
+            case .chromium:
+                try events.make("cwin")
+                try events.set(.property("URL ", of: .property("acTa", of: .index("cwin", 1, of: .application))),
+                               to: address)
+            }
+            target = .index("cwin", 1, of: .application)
+        }
+        // The tab is open. If its window cannot be brought forward, that is not a failure:
+        // reporting one would make the caller open the address a second time.
+        try? bringForward(target, through: events, processID: processID)
     }
 
     // Asks for Automation access to the browser the first time (the system prompt names
@@ -325,7 +346,7 @@ private struct ProcessEvents {
     // Errors after which no further event will get through: the process is gone, or
     // Clutch may not send it events, or it did not answer in time.
     static func unreachable(_ error: Error) -> Bool {
-        [Int(procNotFound), Int(connectionInvalid), Int(errAETimeout), -1743].contains(error.code)
+        [Int(procNotFound), Int(connectionInvalid), Int(errAETimeout), automationNotPermitted].contains(error.code)
     }
 
     @discardableResult

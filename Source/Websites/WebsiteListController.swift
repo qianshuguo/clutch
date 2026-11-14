@@ -57,36 +57,28 @@ final class WebsiteListController: NSObject, NSTableViewDataSource, NSTableViewD
     }
     func numberOfRows(in tableView: NSTableView) -> Int { visibleIndices.count }
     func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? {
-        if let column = tableColumn, tableView.tableColumns.firstIndex(of: column) != 0 { return nil }
-        return entryIndex(forRow: row).map { owner.websites[$0].name }
+        typeSelectName(in: tableView, column: tableColumn, row: row)
     }
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         InsetListRowView()
     }
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
         guard let index = entryIndex(forRow: row) else { return nil }
-        let columnIndex = column.flatMap { tableView.tableColumns.firstIndex(of: $0) } ?? 0
-        let cellWidth = tableView.frameOfCell(atColumn: columnIndex, row: row).width
-        let cell = NSView(frame: NSRect(x: 0, y: 0, width: cellWidth, height: AppDelegate.appRowHeight))
+        let (cell, columnIndex, width) = owner.makeListCell(in: tableView, column: column, row: row)
         let site = owner.websites[index]
         if columnIndex == 0 {
-            let image = NSImageView(frame: AppDelegate.listIconFrame)
-            image.imageScaling = .scaleProportionallyUpOrDown
-            image.image = icon ?? WebsiteEntry.browserIcon
-            cell.addSubview(image)
-            let name = NSTextField(labelWithString: site.name)
-            owner.configureListName(name, width: cellWidth)
-            cell.addSubview(name)
+            let name = owner.addListName(site.name, icon: owner.makeListIcon(image: icon ?? WebsiteEntry.browserIcon),
+                                         to: cell, width: width)
             // Pointing at the row shows the full address that opens, and whether its
             // subdomains count.
             let includes = site.scope?.includesSubdomains ?? false
             let tip = includes ? site.url + "\nIncluding subdomains" : site.url
             cell.toolTip = tip
             name.toolTip = tip
-            return cell
+        } else {
+            owner.addShortcutRecorder(to: cell, width: width, for: .website(url: site.url),
+                                      keys: site.keys, table: tableView, row: row)
         }
-        owner.addShortcutRecorder(to: cell, width: cellWidth, for: .website(url: site.url),
-                                  keys: site.keys, table: tableView, row: row)
         return cell
     }
 }

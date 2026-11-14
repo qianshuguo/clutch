@@ -48,8 +48,3 @@ func shortcutName(_ keys: [UInt16]) -> String? {
 func shortcutLabel(_ keys: [UInt16]) -> String {
     capsSymbol + (shortcutName(keys) ?? "?")
 }
-
-// Field title: "⇪M", "⇪M W", "⇪M W E", or the empty-field placeholder.
-func shortcutTitle(_ keys: [UInt16]) -> String {
-    shortcutName(keys).map { capsSymbol + $0 } ?? KeyRecorder.emptyTitle
-}

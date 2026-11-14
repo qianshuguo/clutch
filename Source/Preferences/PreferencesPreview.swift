@@ -11,6 +11,7 @@ private struct PreferencesCanvas: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let controller = context.coordinator
         try? controller.loadBindings()
+        try? controller.loadFolders()
         try? controller.loadWebsites()
         controller.selectedPage = page
         return controller.makePreferencesContent()

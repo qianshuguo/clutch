@@ -4,28 +4,38 @@ extension AppDelegate: NSMenuItemValidation {
     func createMenu() {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "⇪+"
-        let menu = NSMenu()
         @discardableResult
-        func add(_ title: String, _ action: Selector, _ key: String, hidden: Bool = false) -> NSMenuItem {
+        func add(_ title: String, _ action: Selector, _ key: String = "", to menu: NSMenu) -> NSMenuItem {
             let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: key)
             menuItem.target = self
-            // Hidden items keep their shortcut in the app menu below.
-            menuItem.isHidden = hidden
-            menuItem.allowsKeyEquivalentWhenHidden = hidden
             menu.addItem(menuItem)
             return menuItem
         }
-        add("Preferences", #selector(showSettings), ",")
-        add("Close Window", #selector(closeSettings), "w", hidden: true)
-        add("Find", #selector(findInList), "f", hidden: true)
-        add("Shelf…", #selector(showShelf), "")
-        let toggleItem = add("Enable Clutch", #selector(toggle), "s")
-        menu.addItem(.separator())
-        add("Quit Clutch", #selector(quitApp), "q")
+        // The ⇪+ menu and the app menu hold the same commands. Returns the menu's toggle item.
+        // Caps + Tab opens Preferences and Caps + Space the Shelf, from anywhere; AppKit
+        // cannot show ⇪ in a key equivalent, so General in Preferences names them instead.
+        func addCommands(to menu: NSMenu) -> NSMenuItem {
+            add("Preferences", #selector(showSettings), to: menu)
+            add("Shelf…", #selector(showShelf), to: menu)
+            let toggleItem = add("Enable Clutch", #selector(toggle), "s", to: menu)
+            menu.addItem(.separator())
+            add("Quit Clutch", #selector(quitApp), "q", to: menu)
+            return toggleItem
+        }
+        let menu = NSMenu()
+        let statusToggle = addCommands(to: menu)
         item.menu = menu
         // App-scoped shortcuts; Command-S in another app keeps its normal meaning.
         let main = NSMenu()
-        let root = NSMenuItem(); root.submenu = menu.copy() as? NSMenu
+        let appMenu = NSMenu()
+        let appToggle = addCommands(to: appMenu)
+        // ⌘W and ⌘F work in Clutch's windows without showing in the menu.
+        for hidden in [add("Close Window", #selector(closeSettings), "w", to: appMenu),
+                       add("Find", #selector(findInList), "f", to: appMenu)] {
+            hidden.isHidden = true
+            hidden.allowsKeyEquivalentWhenHidden = true
+        }
+        let root = NSMenuItem(); root.submenu = appMenu
         main.addItem(root)
         // Text fields get ⌘X, ⌘C, ⌘V, ⌘A and ⌘Z only through these menu items (Clutch has
         // no other main menu); they go to whatever field or list has focus.
@@ -41,7 +51,7 @@ extension AppDelegate: NSMenuItemValidation {
         edit.submenu = editMenu
         main.addItem(edit)
         NSApp.mainMenu = main
-        toggleMenuItems = [toggleItem] + (root.submenu?.items.filter { $0.action == #selector(toggle) } ?? [])
+        toggleMenuItems = [statusToggle, appToggle]
     }
     func updateToggleMenuTitle() {
         let title = tap != nil ? "Disable Clutch" : (wantsEnabled ? "Cancel Enabling" : "Enable Clutch")

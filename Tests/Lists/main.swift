@@ -70,7 +70,7 @@ owner.folders = [FolderEntry(name: "First", path: "/tmp"), FolderEntry(name: "Se
 let foldersPage = NSView(frame: NSRect(origin: .zero, size: AppDelegate.preferenceSize))
 // As in Preferences, so saving the folders reloads this table.
 owner.addFoldersPage(to: foldersPage)
-let preferences = (content: foldersPage, controller: owner.preferencesFolderList!)
+let preferences = (content: foldersPage, controller: owner.folderList!)
 let preferencesTable = preferences.controller.table
 preferencesTable.reloadData()
 expect(preferencesTable.dataSource === preferences.controller, "preferences retains its own table data source")
@@ -137,13 +137,13 @@ expect(AppDelegate.folderFields(name: "", location: "").map { $0.label } == ["Na
        && AppDelegate.folderFields(name: "", location: "")[1].choosesFolder, "Add and Edit Folder share Name and Location, with Choose…")
 let addedFolder = FileManager.default.temporaryDirectory.appendingPathComponent("ClutchAddedFolder").standardizedFileURL.path
 try? FileManager.default.createDirectory(atPath: addedFolder, withIntermediateDirectories: true)
-owner.addFolder(name: "", location: "/tmp/", to: preferences.controller)
+owner.addFolder(name: "", location: "/tmp/")
 expect(owner.folders.count == 2 && preferencesTable.selectedRowIndexes == IndexSet(integer: 0), "adding a folder already listed selects it")
-owner.addFolder(name: "", location: addedFolder, to: preferences.controller)
+owner.addFolder(name: "", location: addedFolder)
 expect(owner.folders.count == 3 && owner.folders[2].name == "ClutchAddedFolder"
        && preferencesTable.selectedRowIndexes == IndexSet(integer: 2), "an added folder without a name uses its own")
 owner.folders.removeLast()
-owner.addFolder(name: " Added ", location: addedFolder, to: preferences.controller)
+owner.addFolder(name: " Added ", location: addedFolder)
 expect(owner.folders.last?.name == "Added" && owner.folders.last?.path == addedFolder, "a folder can be added with a name")
 owner.folders.removeLast(); owner.saveFolders()
 try? FileManager.default.removeItem(atPath: addedFolder)
@@ -183,11 +183,6 @@ expect(abs(header.secondLabel.frame.minX + ListGeometry.labelTextInset - (detail
        "shortcut header text lines up with the left edge of the shortcut fields")
 expect(preferences.content.subviews.contains { $0 is PlainListHeaderView }, "the Folders page has a header")
 expect(owner.assignShortcut([46, 46], to: .app(path: owner.bindings[0].path), recorder: recorder) && owner.bindings[0].keys == [46, 46], "Caps + M + M uses the same key twice")
-expect(!owner.assignShortcut([46, KeyCode.space], to: .app(path: owner.bindings[0].path), recorder: recorder), "Space stays reserved as a second key")
-expect(!owner.assignShortcut([46, 13, KeyCode.space], to: .app(path: owner.bindings[0].path), recorder: recorder), "Space stays reserved as a third key")
-expect(!owner.assignShortcut([46, KeyCode.delete], to: .app(path: owner.bindings[0].path), recorder: recorder), "Delete is reserved for editing a recording")
-expect(!owner.assignShortcut([46, KeyCode.returnKey], to: .app(path: owner.bindings[0].path), recorder: recorder), "Return is reserved for confirming")
-expect(!owner.assignShortcut([KeyCode.keypadEnter], to: .app(path: owner.bindings[0].path), recorder: recorder), "Enter is reserved for confirming")
 expect(!owner.assignShortcut([46, 13, 14, 7], to: .app(path: owner.bindings[0].path), recorder: recorder), "a shortcut has at most three keys")
 expect(owner.assignShortcut([46, 13], to: .app(path: owner.bindings[0].path), recorder: recorder)
        && owner.bindings[0].keys == [46, 13], "Caps + M + W is assigned without asking")
@@ -238,6 +233,8 @@ recorder.capsKeyPressed(KeyCode.delete)
 expect(recorder.title == "⇪T H…", "Caps + Delete removes the last key")
 recorder.capsKeyPressed(KeyCode.space)
 expect(recorder.title == "⇪T H…", "Caps + Space is not recorded")
+recorder.capsKeyPressed(KeyCode.tab)
+expect(recorder.title == "⇪T H…", "Caps + Tab is not recorded")
 recorder.capsKeyPressed(KeyCode.delete)
 recorder.capsKeyPressed(KeyCode.delete)
 expect(recorder.title == "⇪…", "Caps + Delete can remove every key")
@@ -370,12 +367,11 @@ func windowRecorder(_ row: Int) -> KeyRecorder? {
         .subviews.compactMap { $0 as? KeyRecorder }.first
 }
 let centerRow = WindowCommand.allCases.firstIndex(of: .center)!
-expect(windowRecorder(centerRow)?.title == shortcutTitle(windowOwner.windowShortcuts.key(for: .center).map { [$0] } ?? []), "shortcut field shows the current key")
+expect(windowRecorder(centerRow)?.title == (windowOwner.windowShortcuts.key(for: .center).map { shortcutLabel([$0]) } ?? KeyRecorder.emptyTitle), "shortcut field shows the current key")
 let savedWindowKeys = UserDefaults.standard.data(forKey: DefaultsKey.windowShortcuts)
 windowOwner.windowShortcuts = .defaults
 if let recorder = windowRecorder(centerRow) {
     expect(windowOwner.assignShortcut([40], to: .window(.center), recorder: recorder), "a free key is assigned without asking")
-    expect(!windowOwner.assignShortcut([KeyCode.space], to: .window(.center), recorder: recorder), "Space stays reserved")
     expect(!windowOwner.assignShortcut([40, 13], to: .window(.center), recorder: recorder), "a window action takes one key")
 }
 expect(windowOwner.windowShortcuts.key(for: .center) == 40 && windowRecorder(centerRow)?.title == "⇪K", "assignment updates the list")
@@ -523,8 +519,8 @@ siteList.table.selectRowIndexes(IndexSet([0, 2]), byExtendingSelection: false)
 siteOwner.removeWebsites()
 expect(siteOwner.websites.map { $0.name } == ["github.com/qianshuguo/clutch"] && siteList.table.selectedRowIndexes == IndexSet(integer: 0),
        "removing selected websites selects the nearest remaining row")
-expect(AppDelegate.preferenceTabs.map { $0.id } == ["general", "apps", "folders", "websites", "windows", "shelf"],
-       "Websites is its own Preferences page, before Windows; Shelf comes last")
+expect(AppDelegate.preferenceTabs.map { $0.id } == ["general", "apps", "folders", "websites", "windows"],
+       "Websites is its own Preferences page, before Windows; the Shelf has no page")
 if let data = savedWebsites { UserDefaults.standard.set(data, forKey: DefaultsKey.websites) }
 else { UserDefaults.standard.removeObject(forKey: DefaultsKey.websites) }
 print("PASS: Websites list, names, shared shortcuts, adding, editing and removing")

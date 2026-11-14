@@ -175,7 +175,6 @@ extension AppDelegate {
     func assignShortcut(_ keys: [UInt16], to owner: ShortcutOwner, recorder: KeyRecorder) -> Bool {
         guard !keys.isEmpty, keys.count <= (owner.isWindow ? 1 : KeyboardState.maxShortcutKeys),
               let name = allShortcuts.first(where: { $0.owner == owner })?.name else { return false }
-        guard keys.allSatisfy({ shortcutKeyAvailable($0, for: owner) }) else { return false }
         let conflicts = shortcutConflicts(keys, for: owner)
         let label = shortcutLabel(keys)
         if !conflicts.owners.isEmpty {
@@ -222,18 +221,6 @@ extension AppDelegate {
         if foldersChanged { saveFolders() }
         if websitesChanged { saveWebsites() }
         if windowsChanged { saveWindowShortcuts() }
-    }
-    // Caps + Space opens the Shelf, Caps + Delete takes back a key and Caps + Return
-    // confirms, so no list can take them. A window action can take Delete: it is a
-    // single key, so there is nothing to take back.
-    func shortcutKeyAvailable(_ code: UInt16, for owner: ShortcutOwner) -> Bool {
-        if code == KeyCode.delete && owner.isWindow { return true }
-        guard code == KeyCode.space || code == KeyCode.delete || KeyCode.isReturn(code) else { return true }
-        NSSound.beep()
-        let use = code == KeyCode.space ? " for the Shelf"
-            : code == KeyCode.delete ? " for taking back keys while Caps is held" : " for confirming"
-        logStatus("\(shortcutLabel([code])) is reserved\(use). Choose another key.")
-        return false
     }
     // "A", "A and B", "A, B and C".
     func listNames(_ names: [String]) -> String {
@@ -304,14 +291,8 @@ extension AppDelegate {
             self.logStatus("Added \(name). Click its shortcut field to assign a key.")
         }
     }
-    // Rows may be filtered by the search field, so selected rows are mapped back to
-    // their applications. The row now at the first removed position is selected.
     @objc func removeBinding() {
-        guard let list = applicationList, let firstRow = list.table.selectedRowIndexes.first else { return }
-        let selection = list.selectedEntryIndices
-        guard ListSelection.remove(selection, from: &bindings) else { return }
-        saveBindings()
-        ListSelection.selectAfterRemoval(at: firstRow, in: list.table)
+        removeSelectedEntries(of: applicationList, from: \.bindings, save: saveBindings)
     }
     // Where the app is now (its saved path, or where its bundle ID moved) and its
     // running instance, if any.
@@ -335,35 +316,30 @@ extension AppDelegate {
         guard let target = url else { showError(ToolError(message:"Could not find \(binding.name). Add the application again.")); return }
         if let app = running {
             let alreadyFrontmost = workspace.frontmostApplication?.processIdentifier == app.processIdentifier
-            closePreferencesForAction()
-            if !alreadyFrontmost {
-                app.unhide()
-                app.bringForward(allWindows: true)
-            }
+            if !alreadyFrontmost { app.unhideAndBringForward(allWindows: true) }
             applicationWindowCycle.advance(in: app, cycle: alreadyFrontmost) {
                 AppDelegate.reopen(app, at: target)
             }
             return
         }
+        // With Ask Before Opening off (General) it opens at once, like a running app.
         if asksBeforeOpening {
             guard askToOpen(binding.name, icon: workspace.icon(forFile: target.path)) else { return }
-        } else {
-            // Ask Before Opening is off (General): open at once, like a running app.
-            closePreferencesForAction()
         }
         let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = true
         workspace.openApplication(at:target, configuration:configuration) { [weak self] app,error in
-            DispatchQueue.main.async {
+            // Through the run loop, not the main queue: the error alert is modal, and a
+            // modal session inside a main-queue block holds up every later one.
+            performOnMainRunLoop {
                 if let error = error { self?.showError(error) }
-                else { app?.unhide(); app?.bringForward(allWindows: true) }
+                else { app?.unhideAndBringForward(allWindows: true) }
             }
         }
     }
     // The launch confirmation for an app or website that is not open yet, in the Caps
-    // HUD, taking over from Preferences. Returns whether to open it.
+    // HUD. Preferences, when open, stays behind it. Returns whether to open it.
     func askToOpen(_ name: String, icon: NSImage) -> Bool {
         showingLaunchConfirmation = true
-        closePreferencesForAction(keepingApplicationActive: true)
         let confirmed = capsOverlay.confirm(appName: name, icon: icon)
         showingLaunchConfirmation = false
         hideDockIfIdle()

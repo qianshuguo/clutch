@@ -50,19 +50,33 @@ extension AppDelegate {
 
     // Add and Edit use the sheet Folders shares (showFieldSheet): Name and URL, like a
     // browser's bookmark editor, and Include subdomains, on for a new website.
-    @objc func addWebsite() {
-        showWebsiteSheet(title: "Add Website", button: "Add", name: "", address: "",
-                         includesSubdomains: true) { [weak self] name, address, subdomains in
-            self?.addWebsite(address: address, name: name, includesSubdomains: subdomains)
+    @objc func addWebsite() { showAddWebsiteSheet(name: "", address: "", includesSubdomains: true) }
+    private func showAddWebsiteSheet(name: String, address: String, includesSubdomains: Bool) {
+        showWebsiteSheet(title: "Add Website", button: "Add", name: name, address: address,
+                         includesSubdomains: includesSubdomains) { [weak self] name, address, subdomains in
+            guard let self = self,
+                  !self.addWebsite(address: address, name: name, includesSubdomains: subdomains) else { return }
+            // Not a web address: the sheet comes back with what was typed.
+            DispatchQueue.main.async {
+                self.showAddWebsiteSheet(name: name, address: address, includesSubdomains: subdomains)
+            }
         }
     }
     func editWebsite(at index: Int) {
         guard websites.indices.contains(index) else { return }
         let site = websites[index]
-        showWebsiteSheet(title: "Edit Website", button: "Save", name: site.title,
-                         address: Self.editableAddress(site.url),
-                         includesSubdomains: site.includesSubdomains) { [weak self] name, address, subdomains in
-            self?.updateWebsite(at: index, name: name, address: address, includesSubdomains: subdomains)
+        showEditWebsiteSheet(at: index, name: site.title, address: Self.editableAddress(site.url),
+                             includesSubdomains: site.includesSubdomains)
+    }
+    private func showEditWebsiteSheet(at index: Int, name: String, address: String, includesSubdomains: Bool) {
+        showWebsiteSheet(title: "Edit Website", button: "Save", name: name, address: address,
+                         includesSubdomains: includesSubdomains) { [weak self] name, address, subdomains in
+            guard let self = self,
+                  !self.updateWebsite(at: index, name: name, address: address, includesSubdomains: subdomains) else { return }
+            // Not a web address: the sheet comes back with what was typed.
+            DispatchQueue.main.async {
+                self.showEditWebsiteSheet(at: index, name: name, address: address, includesSubdomains: subdomains)
+            }
         }
     }
     // The saved address without "https://", the way it was typed; other schemes stay.
@@ -77,7 +91,8 @@ extension AppDelegate {
                           guard values.count > 1, let url = WebsiteAddress.normalize(values[1]) else { return "" }
                           return WebsiteAddress(url)?.display ?? ""
                       }),
-                      SheetField(label: "URL", value: address, placeholder: { _ in "github.com or github.com/you/project" })]
+                      SheetField(label: "URL", value: address, placeholder: { _ in "github.com or github.com/you/project" },
+                                 required: true)]
         showFieldSheet(on: window, title: title,
                        message: "Include subdomains to also match sites like mail.google.com.",
                        button: button, fields: fields,
@@ -95,13 +110,15 @@ extension AppDelegate {
         return (url, address)
     }
     // Adding an address already in the list (the same site and path) selects it instead.
-    func addWebsite(address text: String, name: String = "", includesSubdomains: Bool = true) {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !name.isEmpty,
-              let parsed = websiteURL(for: text) else { return }
+    // False when the text is not a web address (reported), so the sheet can come back.
+    @discardableResult
+    func addWebsite(address text: String, name: String = "", includesSubdomains: Bool = true) -> Bool {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !name.isEmpty else { return true }
+        guard let parsed = websiteURL(for: text) else { return false }
         let url = parsed.url, address = parsed.address
         if let index = websites.firstIndex(where: { WebsiteAddress($0.url) == address }) {
             websiteList?.reveal(entryAt: index)
-            return
+            return true
         }
         let site = WebsiteEntry(url: url, title: name.trimmingCharacters(in: .whitespacesAndNewlines),
                                 includesSubdomains: includesSubdomains)
@@ -109,31 +126,31 @@ extension AppDelegate {
         saveWebsites()
         websiteList?.reveal(entryAt: websites.count - 1)
         logStatus("Added \(site.name). Click its shortcut field to assign a key.")
+        return true
     }
     // Renames a website and changes its address, keeping its shortcut. An address another
     // website already has is refused, and that website is selected. `includesSubdomains`
-    // nil keeps it.
-    func updateWebsite(at index: Int, name: String, address text: String, includesSubdomains: Bool? = nil) {
-        guard websites.indices.contains(index), let parsed = websiteURL(for: text) else { return }
+    // nil keeps it. False when the text is not a web address (reported), so the sheet can
+    // come back.
+    @discardableResult
+    func updateWebsite(at index: Int, name: String, address text: String, includesSubdomains: Bool? = nil) -> Bool {
+        guard websites.indices.contains(index) else { return true }
+        guard let parsed = websiteURL(for: text) else { return false }
         let url = parsed.url, address = parsed.address
         if let other = websites.indices.first(where: { $0 != index && WebsiteAddress(websites[$0].url) == address }) {
             websiteList?.reveal(entryAt: other)
             showError(ToolError(message: "\(address.display) is already in Websites as \(websites[other].name)."))
-            return
+            return true
         }
         websites[index].url = url
         websites[index].title = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if let includesSubdomains = includesSubdomains { websites[index].includesSubdomains = includesSubdomains }
         saveWebsites()
         websiteList?.reveal(entryAt: index)
+        return true
     }
-    // Removes the selected websites and selects the row that took the first one's place.
     func removeWebsites() {
-        guard let list = websiteList, let firstRow = list.table.selectedRowIndexes.first else { return }
-        let selection = list.selectedEntryIndices
-        guard ListSelection.remove(selection, from: &websites) else { return }
-        saveWebsites()
-        ListSelection.selectAfterRemoval(at: firstRow, in: list.table)
+        removeSelectedEntries(of: websiteList, from: \.websites, save: saveWebsites)
     }
 
     // Return or Open in the list, like opening a folder there: switches to
@@ -142,7 +159,6 @@ extension AppDelegate {
     func openWebsites(_ selection: IndexSet) {
         let sites = selection.compactMap { websites.indices.contains($0) ? websites[$0] : nil }
         guard !sites.isEmpty else { return }
-        closePreferencesForAction()
         for site in sites { openWebsite(site) }
     }
     // The address to open and the pages it matches; nil, reported, for a saved address
@@ -156,16 +172,16 @@ extension AppDelegate {
     }
     private func openWebsite(_ site: WebsiteEntry) {
         guard case let (url, scope)? = destination(of: site) else { return }
-        guard let browser = Browser.scriptableDefault(), let running = browser.running else {
+        guard let (browser, running) = Browser.runningScriptableDefault() else {
             NSWorkspace.shared.open(url)
             return
         }
+        // Choosing Open is the confirmation: with no open tab, the same pass opens one.
         browserTabs.focus(scope, others: otherWebsiteScopes(than: site), in: browser,
-                          browserFrontmost: false) { [weak self] outcome in
+                          browserFrontmost: false, orOpen: url) { [weak self] outcome in
             switch outcome {
-            case .focused:
-                running.unhide()
-                running.bringForward()
+            case .focused, .opened:
+                running.unhideAndBringForward()
             case .notFound, .failed:
                 self?.openInBrowser(url)
             case .notPermitted:
@@ -179,15 +195,14 @@ extension AppDelegate {
     // the tab goes into the window used last, which then comes to the front; otherwise,
     // or when scripting fails, the system opens the address.
     func openInBrowser(_ url: URL) {
-        guard let browser = Browser.scriptableDefault(), let running = browser.running else {
+        guard let (browser, running) = Browser.runningScriptableDefault() else {
             NSWorkspace.shared.open(url)
             return
         }
         browserTabs.open(url, in: browser) { outcome in
             switch outcome {
             case .opened:
-                running.unhide()
-                running.bringForward()
+                running.unhideAndBringForward()
             case .notPermitted, .failed:
                 NSWorkspace.shared.open(url)
             }
@@ -202,7 +217,7 @@ extension AppDelegate {
     // opens the address: in a new tab, or by launching the browser.
     func openWebsiteShortcut(_ site: WebsiteEntry) {
         guard !showingLaunchConfirmation, case let (url, scope)? = destination(of: site) else { return }
-        guard let browser = Browser.scriptableDefault(), let running = browser.running else {
+        guard let (browser, running) = Browser.runningScriptableDefault() else {
             confirmOpening(site, url: url)
             return
         }
@@ -210,15 +225,15 @@ extension AppDelegate {
         // The card stays up while the tabs are looked up, so asking to open continues it
         // instead of the HUD disappearing and coming back.
         capsOverlay.holdCard()
+        // With Ask Before Opening off there is nothing to ask in between, so the pass that
+        // finds no tab opens one too.
         browserTabs.focus(scope, others: otherWebsiteScopes(than: site), in: browser,
-                          browserFrontmost: frontmost) { [weak self] outcome in
+                          browserFrontmost: frontmost, orOpen: asksBeforeOpening ? nil : url) { [weak self] outcome in
             guard let self = self else { return }
             switch outcome {
-            case .focused:
+            case .focused, .opened:
                 self.capsOverlay.releaseCard()
-                self.closePreferencesForAction()
-                running.unhide()
-                running.bringForward()
+                running.unhideAndBringForward()
             case .notFound, .failed:
                 self.confirmOpening(site, url: url)
             case .notPermitted:
@@ -238,7 +253,6 @@ extension AppDelegate {
         guard !showingLaunchConfirmation else { return false }
         guard asksBeforeOpening else {
             capsOverlay.releaseCard()
-            closePreferencesForAction()
             openInBrowser(url)
             return true
         }
